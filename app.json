@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "StudentOS",
+    "slug": "student-os-apple",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0A0A1A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.studentos.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "StudentOS needs camera access for scanning notes.",
+        "NSPhotoLibraryUsageDescription": "StudentOS needs photo library access to save exported notes."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0A1A"
+      },
+      "package": "com.studentos.app"
+    },
+    "plugins": [
+      "expo-sqlite"
+    ]
+  }
+}
