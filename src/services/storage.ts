@@ -1,20 +1,19 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Stroke } from '../types';
 
 // ─── Directories ────────────────────────────────────────────────
 
-const NOTES_DIR = `${FileSystem.documentDirectory}notes/`;
-const EXPORTS_DIR = `${FileSystem.documentDirectory}exports/`;
+const notesDir = new Directory(Paths.document, 'notes/');
+const exportsDir = new Directory(Paths.document, 'exports/');
 
 export async function ensureDirectories(): Promise<void> {
-  const dirs = [NOTES_DIR, EXPORTS_DIR];
-  for (const dir of dirs) {
-    const info = await FileSystem.getInfoAsync(dir);
-    if (!info.exists) {
-      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-    }
+  if (!notesDir.exists) {
+    notesDir.create();
+  }
+  if (!exportsDir.exists) {
+    exportsDir.create();
   }
 }
 
@@ -22,18 +21,17 @@ export async function ensureDirectories(): Promise<void> {
 
 export async function saveNoteDrawing(noteId: string, strokes: Stroke[]): Promise<string> {
   await ensureDirectories();
-  const filePath = `${NOTES_DIR}${noteId}.json`;
-  await FileSystem.writeAsStringAsync(filePath, JSON.stringify(strokes));
-  return filePath;
+  const file = new File(notesDir, `${noteId}.json`);
+  file.write(JSON.stringify(strokes));
+  return file.uri;
 }
 
 export async function loadNoteDrawing(noteId: string): Promise<Stroke[]> {
-  const filePath = `${NOTES_DIR}${noteId}.json`;
-  const info = await FileSystem.getInfoAsync(filePath);
-  if (!info.exists) return [];
+  const file = new File(notesDir, `${noteId}.json`);
+  if (!file.exists) return [];
 
-  const content = await FileSystem.readAsStringAsync(filePath);
   try {
+    const content = await file.text();
     return JSON.parse(content);
   } catch {
     return [];
@@ -41,10 +39,9 @@ export async function loadNoteDrawing(noteId: string): Promise<Stroke[]> {
 }
 
 export async function deleteNoteDrawing(noteId: string): Promise<void> {
-  const filePath = `${NOTES_DIR}${noteId}.json`;
-  const info = await FileSystem.getInfoAsync(filePath);
-  if (info.exists) {
-    await FileSystem.deleteAsync(filePath);
+  const file = new File(notesDir, `${noteId}.json`);
+  if (file.exists) {
+    file.delete();
   }
 }
 
