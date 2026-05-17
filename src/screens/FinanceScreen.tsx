@@ -9,6 +9,7 @@ import {
   useColorScheme,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFinanceStore } from '../store/financeStore';
 import ExpenseChart from '../components/ExpenseChart';
@@ -18,6 +19,7 @@ import { Expense, ExpenseCategory } from '../types';
 import { getSetting } from '../services/database';
 
 export default function FinanceScreen() {
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
@@ -200,7 +202,7 @@ export default function FinanceScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View>
           <Text style={[styles.greeting, { color: theme.textSecondary }]}>
             Finance Tracker
