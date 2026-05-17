@@ -6,8 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
+  TextInput,
   useColorScheme,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +29,11 @@ import {
   getMaxContentWidth,
 } from '../utils/responsive';
 import { getSetting, setSetting } from '../services/database';
+import {
+  saveApiKey,
+  getApiKey,
+  testApiConnection,
+} from '../services/aiService';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -36,6 +43,10 @@ export default function SettingsScreen() {
 
   const [currency, setCurrency] = useState('$');
   const [hapticEnabled, setHapticEnabled] = useState(true);
+  const [apiKey, setApiKey] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -46,6 +57,11 @@ export default function SettingsScreen() {
     if (savedCurrency) setCurrency(savedCurrency);
     const savedHaptic = await getSetting('hapticFeedback');
     if (savedHaptic !== null) setHapticEnabled(savedHaptic === 'true');
+    const key = await getApiKey();
+    if (key) {
+      setHasApiKey(true);
+      setApiKey(key);
+    }
   };
 
   const handleCurrencyChange = () => {
@@ -59,6 +75,32 @@ export default function SettingsScreen() {
   const handleToggleHaptic = (value: boolean) => {
     setHapticEnabled(value);
     setSetting('hapticFeedback', String(value));
+  };
+
+  const handleSaveApiKey = async () => {
+    const trimmed = apiKey.trim();
+    if (!trimmed) {
+      Alert.alert('Error', 'Please enter an API key.');
+      return;
+    }
+    try {
+      await saveApiKey(trimmed);
+      setHasApiKey(true);
+      Alert.alert('Success', 'API key saved securely.');
+    } catch {
+      Alert.alert('Error', 'Failed to save API key.');
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    const result = await testApiConnection();
+    setTestingConnection(false);
+    if (result.success) {
+      Alert.alert('✅ Connected', 'OpenAI API connection is working.');
+    } else {
+      Alert.alert('❌ Failed', result.error || 'Connection test failed.');
+    }
   };
 
   const horizontalPadding = getScreenHorizontalPadding();
@@ -151,7 +193,7 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.appInfo}>
           <Text style={styles.appName}>StudentOS</Text>
-          <Text style={styles.appVersion}>Phase 1 • Version 1.0.0</Text>
+          <Text style={styles.appVersion}>Phase 2 • Version 2.0.0</Text>
         </View>
       </View>
 
@@ -196,6 +238,102 @@ export default function SettingsScreen() {
             thumbColor={hapticEnabled ? COLORS.primary : theme.textTertiary}
           />
         )}
+      </View>
+
+      {/* AI Settings Section */}
+      <View style={styles.section}>
+        <Text
+          style={[
+            styles.sectionTitle,
+            { color: theme.textSecondary, paddingHorizontal: horizontalPadding + rs(4) },
+          ]}
+        >
+          AI SETTINGS
+        </Text>
+
+        <View
+          style={[
+            styles.aiCard,
+            { backgroundColor: theme.surface, marginHorizontal: horizontalPadding },
+          ]}
+        >
+          <Text style={[styles.aiCardLabel, { color: theme.textSecondary }]}>
+            OpenAI API Key
+          </Text>
+          <View style={styles.apiKeyRow}>
+            <TextInput
+              style={[
+                styles.apiKeyInput,
+                {
+                  backgroundColor: theme.surfaceSecondary,
+                  borderColor: theme.border,
+                  color: theme.text,
+                },
+              ]}
+              value={apiKey}
+              onChangeText={setApiKey}
+              placeholder="sk-..."
+              placeholderTextColor={theme.textTertiary}
+              secureTextEntry={!showApiKey}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.eyeBtn}
+              onPress={() => setShowApiKey(!showApiKey)}
+            >
+              <Ionicons
+                name={showApiKey ? 'eye-off' : 'eye'}
+                size={ri(18)}
+                color={theme.textTertiary}
+              />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.aiButtonsRow}>
+            <TouchableOpacity
+              style={[styles.aiActionBtn, { backgroundColor: COLORS.primary }]}
+              onPress={handleSaveApiKey}
+            >
+              <Ionicons name="save-outline" size={ri(14)} color="#FFF" />
+              <Text style={styles.aiActionBtnText}>Save Key</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.aiActionBtn,
+                {
+                  backgroundColor: hasApiKey ? COLORS.success + '15' : theme.surfaceSecondary,
+                },
+              ]}
+              onPress={handleTestConnection}
+              disabled={testingConnection || !hasApiKey}
+            >
+              {testingConnection ? (
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              ) : (
+                <>
+                  <Ionicons
+                    name="flash-outline"
+                    size={ri(14)}
+                    color={hasApiKey ? COLORS.success : theme.textTertiary}
+                  />
+                  <Text
+                    style={[
+                      styles.aiActionBtnText,
+                      { color: hasApiKey ? COLORS.success : theme.textTertiary },
+                    ]}
+                  >
+                    Test
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <Text style={[styles.aiHint, { color: theme.textTertiary }]}>
+            Your API key is stored securely on-device. It's used for note summarization only.
+          </Text>
+        </View>
       </View>
 
       {/* Data Section */}
@@ -257,17 +395,12 @@ export default function SettingsScreen() {
           'About StudentOS',
           'Built for students, by students'
         )}
-        {renderSettingRow(
-          'heart-outline',
-          'Rate the App',
-          'If you enjoy using StudentOS'
-        )}
       </View>
 
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={[styles.footerText, { color: theme.textTertiary }]}>
-          StudentOS Phase 1
+          StudentOS Phase 2
         </Text>
         <Text style={[styles.footerText, { color: theme.textTertiary }]}>
           Made with ❤️ for students everywhere
@@ -365,6 +498,54 @@ const styles = StyleSheet.create({
   currencyValue: {
     fontSize: rf(FONT_SIZES.title),
     fontWeight: '700',
+  },
+  aiCard: {
+    borderRadius: rr(RADIUS.lg),
+    padding: rs(SPACING.lg),
+  },
+  aiCardLabel: {
+    fontSize: rf(FONT_SIZES.small),
+    fontWeight: '600',
+    marginBottom: rs(SPACING.sm),
+  },
+  apiKeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rs(SPACING.sm),
+  },
+  apiKeyInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: rr(RADIUS.md),
+    padding: rs(SPACING.sm + 2),
+    fontSize: rf(FONT_SIZES.body),
+  },
+  eyeBtn: {
+    padding: rs(SPACING.sm),
+  },
+  aiButtonsRow: {
+    flexDirection: 'row',
+    gap: rs(SPACING.sm),
+    marginTop: rs(SPACING.md),
+  },
+  aiActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: rr(RADIUS.md),
+    paddingVertical: rs(SPACING.sm + 2),
+    paddingHorizontal: rs(SPACING.lg),
+    gap: rs(SPACING.xs),
+  },
+  aiActionBtnText: {
+    color: '#FFF',
+    fontSize: rf(FONT_SIZES.small),
+    fontWeight: '600',
+  },
+  aiHint: {
+    fontSize: rf(FONT_SIZES.caption),
+    marginTop: rs(SPACING.md),
+    lineHeight: rf(FONT_SIZES.caption) * 1.4,
   },
   footer: {
     alignItems: 'center',

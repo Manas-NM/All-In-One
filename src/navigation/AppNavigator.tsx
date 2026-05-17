@@ -12,6 +12,8 @@ import { rf, rs, ri, pickByDevice } from '../utils/responsive';
 // Screens
 import NotesListScreen from '../screens/NotesListScreen';
 import NoteEditorScreen from '../screens/NoteEditorScreen';
+import SubjectsScreen from '../screens/SubjectsScreen';
+import TasksScreen from '../screens/TasksScreen';
 import FinanceScreen from '../screens/FinanceScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
@@ -28,6 +30,11 @@ function NotesStackNavigator() {
         component={NoteEditorScreen}
         options={{ gestureEnabled: true }}
       />
+      <NotesStack.Screen
+        name="Subjects"
+        component={SubjectsScreen}
+        options={{ gestureEnabled: true }}
+      />
     </NotesStack.Navigator>
   );
 }
@@ -41,10 +48,6 @@ function AppTabs() {
   const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
 
-  // Tab bar height adapts to:
-  //   • Device class – tablets get a slightly taller bar
-  //   • Bottom safe-area inset – devices with a home indicator need
-  //     extra room so labels aren't crowded against the indicator.
   const baseTabHeight = pickByDevice({
     small: 56,
     medium: 60,
@@ -63,6 +66,9 @@ function AppTabs() {
           switch (route.name) {
             case 'Notes':
               iconName = focused ? 'document-text' : 'document-text-outline';
+              break;
+            case 'Tasks':
+              iconName = focused ? 'checkbox' : 'checkbox-outline';
               break;
             case 'Finance':
               iconName = focused ? 'wallet' : 'wallet-outline';
@@ -94,6 +100,7 @@ function AppTabs() {
       })}
     >
       <Tab.Screen name="Notes" component={NotesStackNavigator} />
+      <Tab.Screen name="Tasks" component={TasksScreen} />
       <Tab.Screen name="Finance" component={FinanceScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>

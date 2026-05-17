@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   RefreshControl,
+  ScrollView,
   useColorScheme,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -14,12 +15,14 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNotesStore } from '../store/notesStore';
+import { useSubjectsStore } from '../store/subjectsStore';
 import NoteCard from '../components/NoteCard';
 import { NotesStackParamList } from '../types';
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from '../utils/constants';
 import {
   rf,
   rs,
+  rr,
   ri,
   getScreenHorizontalPadding,
   getMaxContentWidth,
@@ -36,10 +39,14 @@ export default function NotesListScreen() {
 
   const { notes, isLoading, loadNotes, deleteNote, toggleFavorite } =
     useNotesStore();
+  const { subjects, loadSubjects } = useSubjectsStore();
+
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       loadNotes();
+      loadSubjects();
     }, [])
   );
 
@@ -62,14 +69,15 @@ export default function NotesListScreen() {
     );
   };
 
-  const sortedNotes = [...notes].sort((a, b) => {
-    // Favorites first, then by update date
+  const filteredNotes = selectedSubjectId
+    ? notes.filter((n) => n.subjectId === selectedSubjectId)
+    : notes;
+
+  const sortedNotes = [...filteredNotes].sort((a, b) => {
     if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
   });
 
-  // Mirrors the FinanceScreen header math so all screens line up at the
-  // same vertical baseline regardless of device.
   const headerTopPadding = Math.max(insets.top, rs(12)) + rs(8);
   const horizontalPadding = getScreenHorizontalPadding();
   const maxContentWidth = getMaxContentWidth();
@@ -98,24 +106,117 @@ export default function NotesListScreen() {
             numberOfLines={1}
             allowFontScaling={false}
           >
-            {notes.length} {notes.length === 1 ? 'note' : 'notes'}
+            {filteredNotes.length} {filteredNotes.length === 1 ? 'note' : 'notes'}
           </Text>
         </View>
-        <TouchableOpacity
-          style={[styles.addButton, { backgroundColor: COLORS.primary }]}
-          onPress={handleCreateNote}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="add" size={ri(24)} color="#FFF" />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.subjectsButton, { borderColor: theme.border }]}
+            onPress={() => navigation.navigate('Subjects')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="folder-outline" size={ri(18)} color={COLORS.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.addButton, { backgroundColor: COLORS.primary }]}
+            onPress={handleCreateNote}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="add" size={ri(24)} color="#FFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
+      {/* Subject Filter Tabs */}
+      {subjects.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.filterTabs,
+            { paddingHorizontal: horizontalPadding },
+          ]}
+        >
+          <TouchableOpacity
+            style={[
+              styles.filterTab,
+              {
+                backgroundColor: !selectedSubjectId
+                  ? COLORS.primary + '15'
+                  : 'transparent',
+                borderColor: !selectedSubjectId
+                  ? COLORS.primary
+                  : theme.border,
+              },
+            ]}
+            onPress={() => setSelectedSubjectId(null)}
+          >
+            <Text
+              style={[
+                styles.filterTabText,
+                {
+                  color: !selectedSubjectId
+                    ? COLORS.primary
+                    : theme.textSecondary,
+                },
+              ]}
+            >
+              All
+            </Text>
+          </TouchableOpacity>
+          {subjects.map((subject) => (
+            <TouchableOpacity
+              key={subject.id}
+              style={[
+                styles.filterTab,
+                {
+                  backgroundColor:
+                    selectedSubjectId === subject.id
+                      ? subject.color + '20'
+                      : 'transparent',
+                  borderColor:
+                    selectedSubjectId === subject.id
+                      ? subject.color
+                      : theme.border,
+                },
+              ]}
+              onPress={() =>
+                setSelectedSubjectId(
+                  selectedSubjectId === subject.id ? null : subject.id
+                )
+              }
+            >
+              <View
+                style={[
+                  styles.filterDot,
+                  { backgroundColor: subject.color },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.filterTabText,
+                  {
+                    color:
+                      selectedSubjectId === subject.id
+                        ? subject.color
+                        : theme.textSecondary,
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {subject.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+
       {/* Notes List */}
-      {notes.length === 0 ? (
+      {sortedNotes.length === 0 ? (
         <View style={[styles.emptyState, { paddingBottom: insets.bottom + rs(100) }]}>
           <Text style={{ fontSize: rf(56), marginBottom: rs(16) }}>📝</Text>
           <Text style={[styles.emptyTitle, { color: theme.text }]}>
-            No notes yet
+            {selectedSubjectId ? 'No notes in this subject' : 'No notes yet'}
           </Text>
           <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
             Tap the + button to create your first note
@@ -125,22 +226,26 @@ export default function NotesListScreen() {
         <FlatList
           data={sortedNotes}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View
-              style={{
-                alignSelf: 'center',
-                width: '100%',
-                maxWidth: maxContentWidth,
-              }}
-            >
-              <NoteCard
-                note={item}
-                onPress={() => navigation.navigate('NoteEditor', { noteId: item.id })}
-                onToggleFavorite={() => toggleFavorite(item.id)}
-                onDelete={() => handleDeleteNote(item.id, item.title)}
-              />
-            </View>
-          )}
+          renderItem={({ item }) => {
+            const subject = subjects.find((s) => s.id === item.subjectId);
+            return (
+              <View
+                style={{
+                  alignSelf: 'center',
+                  width: '100%',
+                  maxWidth: maxContentWidth,
+                }}
+              >
+                <NoteCard
+                  note={item}
+                  subject={subject}
+                  onPress={() => navigation.navigate('NoteEditor', { noteId: item.id })}
+                  onToggleFavorite={() => toggleFavorite(item.id)}
+                  onDelete={() => handleDeleteNote(item.id, item.title)}
+                />
+              </View>
+            );
+          }}
           contentContainerStyle={[
             styles.list,
             { paddingBottom: insets.bottom + rs(100) },
@@ -185,6 +290,19 @@ const styles = StyleSheet.create({
     marginTop: rs(2),
     lineHeight: rf(FONT_SIZES.display) * 1.2,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rs(SPACING.sm),
+  },
+  subjectsButton: {
+    width: ri(40),
+    height: ri(40),
+    borderRadius: ri(40) / 2,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   addButton: {
     width: ri(44),
     height: ri(44),
@@ -196,6 +314,29 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
+  },
+  filterTabs: {
+    gap: rs(SPACING.sm),
+    paddingBottom: rs(SPACING.sm),
+  },
+  filterTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: rr(RADIUS.pill),
+    paddingHorizontal: rs(SPACING.md),
+    paddingVertical: rs(SPACING.xs + 2),
+    gap: rs(SPACING.xs),
+  },
+  filterDot: {
+    width: rs(7),
+    height: rs(7),
+    borderRadius: rs(4),
+  },
+  filterTabText: {
+    fontSize: rf(FONT_SIZES.small),
+    fontWeight: '500',
+    maxWidth: rs(100),
   },
   list: {
     paddingVertical: rs(SPACING.sm),

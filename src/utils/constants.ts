@@ -88,6 +88,39 @@ export const CATEGORY_CONFIG: Record<
   other: { label: 'Other', icon: 'ellipsis-horizontal', color: '#ADB5BD' },
 };
 
+// ─── Subject Preset Colors ───────────────────────────────────────
+
+export const SUBJECT_COLORS = [
+  '#6C5CE7', // purple
+  '#E17055', // red
+  '#00B894', // green
+  '#74B9FF', // blue
+  '#FD79A8', // pink
+  '#FDCB6E', // yellow
+  '#00CEC9', // teal
+  '#ADB5BD', // gray
+] as const;
+
+// ─── Subject Icons ───────────────────────────────────────────────
+
+export const SUBJECT_ICONS = [
+  { name: 'book', label: 'Book' },
+  { name: 'flask', label: 'Science' },
+  { name: 'calculator', label: 'Calculator' },
+  { name: 'globe', label: 'Globe' },
+  { name: 'color-palette', label: 'Palette' },
+  { name: 'musical-notes', label: 'Music' },
+  { name: 'football', label: 'Sports' },
+] as const;
+
+// ─── Task Priority Config ────────────────────────────────────────
+
+export const PRIORITY_CONFIG = {
+  high: { label: 'High', color: '#E17055', icon: 'flag' },
+  medium: { label: 'Medium', color: '#FDCB6E', icon: 'flag' },
+  low: { label: 'Low', color: '#00B894', icon: 'flag' },
+} as const;
+
 // ─── Database ───────────────────────────────────────────────────
 
 export const DB_NAME = 'studentos.db';

@@ -7,7 +7,7 @@ import {
   useColorScheme,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Note } from '../types';
+import { Note, Subject } from '../types';
 import { COLORS, FONT_SIZES, SPACING, RADIUS } from '../utils/constants';
 import {
   rf,
@@ -19,6 +19,7 @@ import {
 
 interface NoteCardProps {
   note: Note;
+  subject?: Subject | null;
   onPress: () => void;
   onToggleFavorite: () => void;
   onDelete: () => void;
@@ -26,6 +27,7 @@ interface NoteCardProps {
 
 export default function NoteCard({
   note,
+  subject,
   onPress,
   onToggleFavorite,
   onDelete,
@@ -84,6 +86,16 @@ export default function NoteCard({
           </TouchableOpacity>
         </View>
 
+        {/* Subject badge */}
+        {subject && (
+          <View style={[styles.subjectBadge, { backgroundColor: subject.color + '18' }]}>
+            <Ionicons name={subject.icon as any} size={ri(11)} color={subject.color} />
+            <Text style={[styles.subjectBadgeText, { color: subject.color }]} numberOfLines={1}>
+              {subject.name}
+            </Text>
+          </View>
+        )}
+
         {/* Preview */}
         {preview ? (
           <Text
@@ -103,9 +115,16 @@ export default function NoteCard({
 
         {/* Footer */}
         <View style={styles.footer}>
-          <Text style={[styles.date, { color: theme.textTertiary }]}>
-            {formatDate(note.updatedAt)}
-          </Text>
+          <View style={styles.footerLeft}>
+            <Text style={[styles.date, { color: theme.textTertiary }]}>
+              {formatDate(note.updatedAt)}
+            </Text>
+            {note.aiSummary && (
+              <View style={styles.aiIndicator}>
+                <Text style={styles.aiIcon}>✨</Text>
+              </View>
+            )}
+          </View>
           <TouchableOpacity
             onPress={onDelete}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -140,13 +159,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: rs(6),
+    marginBottom: rs(4),
   },
   title: {
     fontSize: rf(FONT_SIZES.subtitle),
     fontWeight: '600',
     flex: 1,
     marginRight: rs(SPACING.sm),
+  },
+  subjectBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: rr(RADIUS.xs),
+    paddingHorizontal: rs(SPACING.sm),
+    paddingVertical: rs(2),
+    marginBottom: rs(SPACING.xs),
+    gap: rs(4),
+  },
+  subjectBadgeText: {
+    fontSize: rf(FONT_SIZES.caption),
+    fontWeight: '500',
+    maxWidth: rs(120),
   },
   preview: {
     fontSize: rf(FONT_SIZES.body),
@@ -168,7 +202,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  footerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rs(SPACING.xs),
+  },
   date: {
     fontSize: rf(FONT_SIZES.caption),
+  },
+  aiIndicator: {
+    marginLeft: rs(2),
+  },
+  aiIcon: {
+    fontSize: rf(10),
   },
 });

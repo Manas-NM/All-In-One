@@ -12,6 +12,7 @@ interface NotesState {
   updateNote: (id: string, updates: Partial<Omit<Note, 'id' | 'createdAt'>>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   toggleFavorite: (id: string) => Promise<void>;
+  getNotesBySubject: (subjectId: string) => Note[];
 }
 
 export const useNotesStore = create<NotesState>((set, get) => ({
@@ -61,5 +62,9 @@ export const useNotesStore = create<NotesState>((set, get) => ({
         n.id === id ? { ...n, isFavorite: newFav } : n
       ),
     }));
+  },
+
+  getNotesBySubject: (subjectId) => {
+    return get().notes.filter((n) => n.subjectId === subjectId);
   },
 }));
