@@ -3,9 +3,11 @@ import { useColorScheme } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { RootTabParamList, NotesStackParamList } from '../types';
 import { COLORS } from '../utils/constants';
+import { rf, rs, ri, pickByDevice } from '../utils/responsive';
 
 // Screens
 import NotesListScreen from '../screens/NotesListScreen';
@@ -33,6 +35,70 @@ function NotesStackNavigator() {
 // ─── Bottom Tabs ────────────────────────────────────────────────
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
+
+function AppTabs() {
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const insets = useSafeAreaInsets();
+
+  // Tab bar height adapts to:
+  //   • Device class – tablets get a slightly taller bar
+  //   • Bottom safe-area inset – devices with a home indicator need
+  //     extra room so labels aren't crowded against the indicator.
+  const baseTabHeight = pickByDevice({
+    small: 56,
+    medium: 60,
+    large: 62,
+    tablet: 72,
+  });
+  const tabBarHeight = baseTabHeight + insets.bottom;
+
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName: keyof typeof Ionicons.glyphMap;
+
+          switch (route.name) {
+            case 'Notes':
+              iconName = focused ? 'document-text' : 'document-text-outline';
+              break;
+            case 'Finance':
+              iconName = focused ? 'wallet' : 'wallet-outline';
+              break;
+            case 'Settings':
+              iconName = focused ? 'settings' : 'settings-outline';
+              break;
+            default:
+              iconName = 'ellipse';
+          }
+
+          return <Ionicons name={iconName} size={ri(size)} color={color} />;
+        },
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: isDark
+          ? COLORS.dark.textTertiary
+          : COLORS.light.textTertiary,
+        tabBarStyle: {
+          borderTopWidth: 0.5,
+          borderTopColor: isDark ? COLORS.dark.border : COLORS.light.border,
+          paddingTop: rs(4),
+          paddingBottom: insets.bottom > 0 ? insets.bottom : rs(8),
+          height: tabBarHeight,
+        },
+        tabBarLabelStyle: {
+          fontSize: rf(11),
+          fontWeight: '500',
+        },
+      })}
+    >
+      <Tab.Screen name="Notes" component={NotesStackNavigator} />
+      <Tab.Screen name="Finance" component={FinanceScreen} />
+      <Tab.Screen name="Settings" component={SettingsScreen} />
+    </Tab.Navigator>
+  );
+}
 
 export default function AppNavigator() {
   const colorScheme = useColorScheme();
@@ -64,48 +130,7 @@ export default function AppNavigator() {
 
   return (
     <NavigationContainer theme={isDark ? customDarkTheme : customLightTheme}>
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          headerShown: false,
-          tabBarIcon: ({ focused, color, size }) => {
-            let iconName: keyof typeof Ionicons.glyphMap;
-
-            switch (route.name) {
-              case 'Notes':
-                iconName = focused ? 'document-text' : 'document-text-outline';
-                break;
-              case 'Finance':
-                iconName = focused ? 'wallet' : 'wallet-outline';
-                break;
-              case 'Settings':
-                iconName = focused ? 'settings' : 'settings-outline';
-                break;
-              default:
-                iconName = 'ellipse';
-            }
-
-            return <Ionicons name={iconName} size={size} color={color} />;
-          },
-          tabBarActiveTintColor: COLORS.primary,
-          tabBarInactiveTintColor: isDark
-            ? COLORS.dark.textTertiary
-            : COLORS.light.textTertiary,
-          tabBarStyle: {
-            borderTopWidth: 0.5,
-            borderTopColor: isDark ? COLORS.dark.border : COLORS.light.border,
-            paddingTop: 4,
-            height: 88,
-          },
-          tabBarLabelStyle: {
-            fontSize: 11,
-            fontWeight: '500',
-          },
-        })}
-      >
-        <Tab.Screen name="Notes" component={NotesStackNavigator} />
-        <Tab.Screen name="Finance" component={FinanceScreen} />
-        <Tab.Screen name="Settings" component={SettingsScreen} />
-      </Tab.Navigator>
+      <AppTabs />
     </NavigationContainer>
   );
 }

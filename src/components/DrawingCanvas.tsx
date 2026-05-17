@@ -3,9 +3,7 @@ import {
   View,
   StyleSheet,
   PanResponder,
-  Dimensions,
   TouchableOpacity,
-  Text,
   useColorScheme,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,7 +14,15 @@ import {
   PEN_COLORS_DARK,
   HIGHLIGHTER_COLOR,
   TOOL_SIZES,
+  SPACING,
+  RADIUS,
 } from '../utils/constants';
+import {
+  rs,
+  rr,
+  ri,
+  getCanvasDimensions,
+} from '../utils/responsive';
 
 interface DrawingCanvasProps {
   initialStrokes?: Stroke[];
@@ -27,12 +33,17 @@ interface DrawingCanvasProps {
 export default function DrawingCanvas({
   initialStrokes = [],
   onStrokesChange,
-  canvasHeight = 400,
+  canvasHeight,
 }: DrawingCanvasProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
   const penColors = isDark ? PEN_COLORS_DARK : PEN_COLORS;
+
+  // If no explicit height is provided, derive a responsive one from the
+  // device class. This keeps the drawing surface comfortable on every
+  // form factor (iPhone SE → iPad).
+  const responsiveHeight = canvasHeight ?? getCanvasDimensions().height;
 
   const [canvasState, setCanvasState] = useState<CanvasState>({
     strokes: initialStrokes,
@@ -42,7 +53,6 @@ export default function DrawingCanvas({
   const [activeColorIndex, setActiveColorIndex] = useState(0);
   const currentStrokeRef = useRef<StrokePoint[]>([]);
   const canvasRef = useRef<View>(null);
-  const canvasLayoutRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
 
   useEffect(() => {
     onStrokesChange?.(canvasState.strokes);
@@ -89,7 +99,9 @@ export default function DrawingCanvas({
         if (currentStrokeRef.current.length > 1) {
           const style = getStrokeStyle();
           const newStroke: Stroke = {
-            id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+            id:
+              Date.now().toString(36) +
+              Math.random().toString(36).substring(2, 6),
             tool: activeTool,
             color: style.color,
             width: style.width,
@@ -135,7 +147,6 @@ export default function DrawingCanvas({
   // Render strokes as SVG-style paths using Views
   const renderStroke = (stroke: Stroke, index: number) => {
     if (stroke.points.length < 2) return null;
-    // Render as series of small dots/lines using absolute positioned views
     return stroke.points.map((point, i) => {
       if (i === 0) return null;
       const prev = stroke.points[i - 1];
@@ -157,9 +168,7 @@ export default function DrawingCanvas({
             backgroundColor: stroke.color,
             opacity: stroke.opacity,
             borderRadius: stroke.width / 2,
-            transform: [
-              { rotate: `${angle}deg` },
-            ],
+            transform: [{ rotate: `${angle}deg` }],
             transformOrigin: `${stroke.width / 2}px ${stroke.width / 2}px`,
           }}
         />
@@ -201,10 +210,19 @@ export default function DrawingCanvas({
     });
   };
 
+  // Grid spacing scales lightly with canvas height so the lines feel
+  // consistent at different sizes.
+  const gridSpacing = Math.max(28, Math.min(40, Math.round(responsiveHeight / 11)));
+
   return (
     <View style={styles.container}>
       {/* Toolbar */}
-      <View style={[styles.toolbar, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <View
+        style={[
+          styles.toolbar,
+          { backgroundColor: theme.surface, borderColor: theme.border },
+        ]}
+      >
         {/* Drawing Tools */}
         <View style={styles.toolGroup}>
           {(['pen', 'highlighter', 'eraser'] as DrawingTool[]).map((tool) => (
@@ -212,7 +230,9 @@ export default function DrawingCanvas({
               key={tool}
               style={[
                 styles.toolButton,
-                activeTool === tool && { backgroundColor: COLORS.primary + '20' },
+                activeTool === tool && {
+                  backgroundColor: COLORS.primary + '20',
+                },
               ]}
               onPress={() => setActiveTool(tool)}
             >
@@ -224,8 +244,10 @@ export default function DrawingCanvas({
                     ? 'color-fill'
                     : 'close-circle'
                 }
-                size={20}
-                color={activeTool === tool ? COLORS.primary : theme.textSecondary}
+                size={ri(20)}
+                color={
+                  activeTool === tool ? COLORS.primary : theme.textSecondary
+                }
               />
             </TouchableOpacity>
           ))}
@@ -257,8 +279,12 @@ export default function DrawingCanvas({
           >
             <Ionicons
               name="arrow-undo"
-              size={20}
-              color={canvasState.strokes.length > 0 ? theme.text : theme.textTertiary}
+              size={ri(20)}
+              color={
+                canvasState.strokes.length > 0
+                  ? theme.text
+                  : theme.textTertiary
+              }
             />
           </TouchableOpacity>
           <TouchableOpacity
@@ -268,12 +294,16 @@ export default function DrawingCanvas({
           >
             <Ionicons
               name="arrow-redo"
-              size={20}
-              color={canvasState.undoneStrokes.length > 0 ? theme.text : theme.textTertiary}
+              size={ri(20)}
+              color={
+                canvasState.undoneStrokes.length > 0
+                  ? theme.text
+                  : theme.textTertiary
+              }
             />
           </TouchableOpacity>
           <TouchableOpacity style={styles.toolButton} onPress={handleClear}>
-            <Ionicons name="trash-outline" size={18} color={COLORS.error} />
+            <Ionicons name="trash-outline" size={ri(18)} color={COLORS.error} />
           </TouchableOpacity>
         </View>
       </View>
@@ -284,7 +314,7 @@ export default function DrawingCanvas({
         style={[
           styles.canvas,
           {
-            height: canvasHeight,
+            height: responsiveHeight,
             backgroundColor: isDark ? COLORS.dark.surface : '#FFFFFF',
             borderColor: theme.border,
           },
@@ -292,13 +322,21 @@ export default function DrawingCanvas({
         {...panResponder.panHandlers}
       >
         {/* Grid lines */}
-        {Array.from({ length: Math.floor(canvasHeight / 32) }).map((_, i) => (
-          <View
-            key={`grid-${i}`}
-            pointerEvents="none"
-            style={[styles.gridLine, { top: (i + 1) * 32, backgroundColor: theme.border + '40' }]}
-          />
-        ))}
+        {Array.from({ length: Math.floor(responsiveHeight / gridSpacing) }).map(
+          (_, i) => (
+            <View
+              key={`grid-${i}`}
+              pointerEvents="none"
+              style={[
+                styles.gridLine,
+                {
+                  top: (i + 1) * gridSpacing,
+                  backgroundColor: theme.border + '40',
+                },
+              ]}
+            />
+          )
+        )}
 
         {/* Saved strokes */}
         {canvasState.strokes.map((stroke, i) => renderStroke(stroke, i))}
@@ -312,35 +350,37 @@ export default function DrawingCanvas({
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 12,
+    marginBottom: rs(SPACING.md),
   },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    flexWrap: 'wrap',
+    paddingHorizontal: rs(SPACING.md),
+    paddingVertical: rs(SPACING.sm),
+    gap: rs(SPACING.xs),
     borderWidth: 1,
     borderBottomWidth: 0,
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
+    borderTopLeftRadius: rr(RADIUS.lg),
+    borderTopRightRadius: rr(RADIUS.lg),
   },
   toolGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: rs(SPACING.xs),
   },
   toolButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+    width: ri(36),
+    height: ri(36),
+    borderRadius: rr(RADIUS.sm),
     alignItems: 'center',
     justifyContent: 'center',
   },
   colorDot: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: ri(22),
+    height: ri(22),
+    borderRadius: ri(22) / 2,
     marginHorizontal: 2,
   },
   colorDotActive: {
@@ -350,8 +390,8 @@ const styles = StyleSheet.create({
   },
   canvas: {
     borderWidth: 1,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
+    borderBottomLeftRadius: rr(RADIUS.lg),
+    borderBottomRightRadius: rr(RADIUS.lg),
     overflow: 'hidden',
     position: 'relative',
   },

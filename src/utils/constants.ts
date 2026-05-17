@@ -101,3 +101,52 @@ export const CURRENCIES = [
   { symbol: '₹', label: 'INR' },
   { symbol: '¥', label: 'JPY' },
 ] as const;
+
+// ─── Responsive Design Tokens ───────────────────────────────────
+// Base (un-scaled) sizes. Pass these through helpers in
+// `./responsive.ts` (e.g. `rf`, `rs`, `rr`) before applying.
+// Centralizing them here keeps the design language consistent across
+// screens and components.
+
+export const FONT_SIZES = {
+  caption: 11,
+  small: 12,
+  body: 14,
+  bodyLarge: 15,
+  subtitle: 16,
+  title: 18,
+  titleLarge: 20,
+  heading: 24,
+  display: 28,
+  hero: 32,
+  amount: 36,
+} as const;
+
+export const SPACING = {
+  xxs: 2,
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  xxl: 24,
+  xxxl: 32,
+  huge: 40,
+} as const;
+
+export const RADIUS = {
+  xs: 4,
+  sm: 8,
+  md: 10,
+  lg: 12,
+  xl: 14,
+  xxl: 16,
+  pill: 999,
+} as const;
+
+export const HIT_SIZES = {
+  iconSmall: 16,
+  iconMedium: 20,
+  iconLarge: 24,
+  tapTarget: 44, // Apple HIG minimum
+} as const;

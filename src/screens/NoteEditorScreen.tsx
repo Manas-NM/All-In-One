@@ -12,19 +12,36 @@ import {
   useColorScheme,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DrawingCanvas from '../components/DrawingCanvas';
 import { useNotesStore } from '../store/notesStore';
 import { exportNoteToPdf } from '../services/storage';
 import { getNoteById } from '../services/database';
 import { Stroke, NotesStackParamList } from '../types';
-import { COLORS, NOTE_CARD_COLORS } from '../utils/constants';
+import {
+  COLORS,
+  NOTE_CARD_COLORS,
+  FONT_SIZES,
+  SPACING,
+  RADIUS,
+} from '../utils/constants';
+import {
+  rf,
+  rs,
+  rr,
+  ri,
+  getScreenHorizontalPadding,
+  getMaxContentWidth,
+  getCanvasDimensions,
+} from '../utils/responsive';
 
 type EditorRoute = RouteProp<NotesStackParamList, 'NoteEditor'>;
 
 export default function NoteEditorScreen() {
   const navigation = useNavigation();
   const route = useRoute<EditorRoute>();
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
@@ -100,12 +117,13 @@ export default function NoteEditorScreen() {
 
   const handleExportPdf = async () => {
     try {
+      const { width, height } = getCanvasDimensions();
       await exportNoteToPdf(
         title.trim() || 'Untitled Note',
         textContent,
         strokes,
-        400,
-        400
+        width,
+        height
       );
     } catch (error) {
       Alert.alert('Export Error', 'Failed to export PDF.');
@@ -117,11 +135,17 @@ export default function NoteEditorScreen() {
     hasChanges.current = true;
   };
 
+  const headerTopPadding = Math.max(insets.top, rs(8)) + rs(4);
+  const horizontalPadding = getScreenHorizontalPadding();
+  const maxContentWidth = getMaxContentWidth();
+
   if (!isLoaded) {
     return (
       <View style={[styles.container, { backgroundColor: theme.background }]}>
         <View style={styles.loadingContainer}>
-          <Text style={{ color: theme.textSecondary }}>Loading...</Text>
+          <Text style={{ color: theme.textSecondary, fontSize: rf(FONT_SIZES.body) }}>
+            Loading...
+          </Text>
         </View>
       </View>
     );
@@ -133,9 +157,22 @@ export default function NoteEditorScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={24} color={COLORS.primary} />
+      <View
+        style={[
+          styles.header,
+          {
+            borderBottomColor: theme.border,
+            paddingTop: headerTopPadding,
+            paddingHorizontal: rs(SPACING.md),
+          },
+        ]}
+      >
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="chevron-back" size={ri(24)} color={COLORS.primary} />
           <Text style={[styles.backText, { color: COLORS.primary }]}>Notes</Text>
         </TouchableOpacity>
 
@@ -143,11 +180,16 @@ export default function NoteEditorScreen() {
           <TouchableOpacity
             style={styles.headerButton}
             onPress={() => setShowColorPicker(!showColorPicker)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <View style={[styles.colorIndicator, { backgroundColor: noteColor }]} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton} onPress={handleExportPdf}>
-            <Ionicons name="share-outline" size={20} color={theme.text} />
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={handleExportPdf}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="share-outline" size={ri(20)} color={theme.text} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
             <Text style={styles.saveText}>Save</Text>
@@ -157,7 +199,12 @@ export default function NoteEditorScreen() {
 
       {/* Color picker row */}
       {showColorPicker && (
-        <View style={[styles.colorPicker, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
+        <View
+          style={[
+            styles.colorPicker,
+            { backgroundColor: theme.surface, borderBottomColor: theme.border },
+          ]}
+        >
           {NOTE_CARD_COLORS.map((color) => (
             <TouchableOpacity
               key={color}
@@ -179,6 +226,13 @@ export default function NoteEditorScreen() {
         style={styles.scrollView}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingHorizontal: horizontalPadding,
+          paddingBottom: insets.bottom + rs(100),
+          alignSelf: 'center',
+          width: '100%',
+          maxWidth: maxContentWidth,
+        }}
       >
         {/* Title */}
         <TextInput
@@ -200,7 +254,6 @@ export default function NoteEditorScreen() {
           <DrawingCanvas
             initialStrokes={strokes}
             onStrokesChange={handleStrokesChange}
-            canvasHeight={350}
           />
         </View>
 
@@ -229,8 +282,6 @@ export default function NoteEditorScreen() {
             textAlignVertical="top"
           />
         </View>
-
-        <View style={{ height: 100 }} />
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -249,8 +300,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: rs(SPACING.sm + 2),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backButton: {
@@ -258,46 +308,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backText: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
     marginLeft: 2,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: rs(SPACING.sm),
   },
   headerButton: {
-    padding: 8,
+    padding: rs(SPACING.sm),
   },
   colorIndicator: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: ri(22),
+    height: ri(22),
+    borderRadius: ri(22) / 2,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.3)',
   },
   saveButton: {
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingHorizontal: rs(SPACING.lg),
+    paddingVertical: rs(SPACING.sm),
+    borderRadius: rr(RADIUS.sm),
   },
   saveText: {
     color: '#FFF',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: rf(FONT_SIZES.body),
   },
   colorPicker: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 12,
-    paddingVertical: 12,
+    gap: rs(SPACING.md),
+    paddingVertical: rs(SPACING.md),
+    paddingHorizontal: rs(SPACING.md),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   colorOption: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: ri(28),
+    height: ri(28),
+    borderRadius: ri(28) / 2,
   },
   colorOptionActive: {
     borderWidth: 3,
@@ -310,31 +362,30 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
-    paddingHorizontal: 16,
   },
   titleInput: {
-    paddingVertical: 16,
-    fontSize: 24,
+    paddingVertical: rs(SPACING.lg),
+    fontSize: rf(FONT_SIZES.heading),
     fontWeight: '700',
   },
   sectionLabel: {
-    fontSize: 11,
+    fontSize: rf(FONT_SIZES.caption),
     fontWeight: '600',
     letterSpacing: 1,
-    marginBottom: 8,
+    marginBottom: rs(SPACING.sm),
   },
   canvasSection: {
-    marginBottom: 20,
+    marginBottom: rs(SPACING.xl),
   },
   textSection: {
-    marginBottom: 20,
+    marginBottom: rs(SPACING.xl),
   },
   textInput: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 15,
-    lineHeight: 22,
-    minHeight: 120,
+    borderRadius: rr(RADIUS.lg),
+    padding: rs(SPACING.md + 2),
+    fontSize: rf(FONT_SIZES.bodyLarge),
+    lineHeight: rf(FONT_SIZES.bodyLarge) * 1.45,
+    minHeight: rs(120),
   },
 });

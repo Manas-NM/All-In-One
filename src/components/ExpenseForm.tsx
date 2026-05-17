@@ -11,9 +11,24 @@ import {
   Platform,
   useColorScheme,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ExpenseCategory } from '../types';
-import { COLORS, CATEGORY_CONFIG } from '../utils/constants';
+import {
+  COLORS,
+  CATEGORY_CONFIG,
+  FONT_SIZES,
+  SPACING,
+  RADIUS,
+} from '../utils/constants';
+import {
+  rf,
+  rs,
+  rr,
+  ri,
+  getScreenHorizontalPadding,
+  getMaxContentWidth,
+} from '../utils/responsive';
 
 interface ExpenseFormProps {
   visible: boolean;
@@ -33,6 +48,7 @@ export default function ExpenseForm({
   onClose,
   onSubmit,
 }: ExpenseFormProps) {
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
@@ -64,6 +80,9 @@ export default function ExpenseForm({
     (typeof CATEGORY_CONFIG)[ExpenseCategory]
   ][];
 
+  const horizontalPadding = getScreenHorizontalPadding();
+  const maxContentWidth = getMaxContentWidth();
+
   return (
     <Modal
       visible={visible}
@@ -75,9 +94,19 @@ export default function ExpenseForm({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={[styles.container, { backgroundColor: theme.background }]}
       >
-        {/* Header */}
-        <View style={[styles.header, { borderBottomColor: theme.border }]}>
-          <TouchableOpacity onPress={onClose}>
+        {/* Header. pageSheet modals on iOS already inset from the top, but
+            we still defensively account for insets in case of fullScreen
+            usage on certain devices. */}
+        <View
+          style={[
+            styles.header,
+            {
+              borderBottomColor: theme.border,
+              paddingHorizontal: horizontalPadding,
+            },
+          ]}
+        >
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={[styles.cancelText, { color: COLORS.error }]}>Cancel</Text>
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: theme.text }]}>
@@ -86,6 +115,7 @@ export default function ExpenseForm({
           <TouchableOpacity
             onPress={handleSubmit}
             disabled={!amount || parseFloat(amount) <= 0}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text
               style={[
@@ -103,10 +133,23 @@ export default function ExpenseForm({
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.form} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={styles.form}
+          contentContainerStyle={{
+            paddingHorizontal: horizontalPadding,
+            paddingTop: rs(SPACING.lg),
+            paddingBottom: insets.bottom + rs(SPACING.xxl),
+            alignSelf: 'center',
+            width: '100%',
+            maxWidth: maxContentWidth,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
           {/* Amount Input */}
           <View style={styles.section}>
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Amount</Text>
+            <Text style={[styles.label, { color: theme.textSecondary }]}>
+              Amount
+            </Text>
             <View
               style={[
                 styles.amountInputContainer,
@@ -130,7 +173,9 @@ export default function ExpenseForm({
 
           {/* Category Selection */}
           <View style={styles.section}>
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Category</Text>
+            <Text style={[styles.label, { color: theme.textSecondary }]}>
+              Category
+            </Text>
             <View style={styles.categoryGrid}>
               {categories.map(([key, config]) => (
                 <TouchableOpacity
@@ -148,7 +193,7 @@ export default function ExpenseForm({
                 >
                   <Ionicons
                     name={config.icon as any}
-                    size={16}
+                    size={ri(16)}
                     color={category === key ? config.color : theme.textSecondary}
                   />
                   <Text
@@ -203,77 +248,75 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: rs(SPACING.md + 2),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: rf(FONT_SIZES.title - 1),
     fontWeight: '600',
   },
   cancelText: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
   },
   saveText: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
     fontWeight: '600',
   },
   form: {
     flex: 1,
-    padding: 16,
   },
   section: {
-    marginBottom: 24,
+    marginBottom: rs(SPACING.xxl),
   },
   label: {
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
-    marginBottom: 8,
+    marginBottom: rs(SPACING.sm),
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   amountInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: rr(RADIUS.lg),
     borderWidth: 1,
-    paddingHorizontal: 16,
+    paddingHorizontal: rs(SPACING.lg),
   },
   currencySymbol: {
-    fontSize: 24,
+    fontSize: rf(FONT_SIZES.heading),
     fontWeight: '600',
-    marginRight: 8,
+    marginRight: rs(SPACING.sm),
   },
   amountInput: {
     flex: 1,
-    fontSize: 32,
+    fontSize: rf(FONT_SIZES.hero),
     fontWeight: '700',
-    paddingVertical: 16,
+    paddingVertical: rs(SPACING.lg),
   },
   categoryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: rs(SPACING.sm),
   },
   categoryChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: rs(SPACING.md + 2),
+    paddingVertical: rs(SPACING.sm + 2),
+    borderRadius: rr(RADIUS.md),
     borderWidth: 1.5,
-    gap: 6,
+    gap: rs(6),
   },
   categoryText: {
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
   },
   descInput: {
-    borderRadius: 12,
+    borderRadius: rr(RADIUS.lg),
     borderWidth: 1,
-    padding: 14,
-    fontSize: 15,
-    minHeight: 60,
+    padding: rs(SPACING.md + 2),
+    fontSize: rf(FONT_SIZES.bodyLarge),
+    minHeight: rs(60),
     textAlignVertical: 'top',
   },
 });

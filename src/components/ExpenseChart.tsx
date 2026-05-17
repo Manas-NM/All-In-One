@@ -1,16 +1,28 @@
 import React from 'react';
-import { View, Text, StyleSheet, useColorScheme, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { BarChart, PieChart } from 'react-native-gifted-charts';
 import { MonthlyTotal, CategoryTotal } from '../types';
-import { COLORS, CATEGORY_CONFIG } from '../utils/constants';
+import {
+  COLORS,
+  CATEGORY_CONFIG,
+  FONT_SIZES,
+  SPACING,
+  RADIUS,
+} from '../utils/constants';
+import {
+  rf,
+  rs,
+  rr,
+  getScreenHorizontalPadding,
+  getChartDimensions,
+  pickByDevice,
+} from '../utils/responsive';
 
 interface ExpenseChartProps {
   monthlyTotals: MonthlyTotal[];
   categoryTotals: CategoryTotal[];
   currency: string;
 }
-
-const screenWidth = Dimensions.get('window').width;
 
 export default function ExpenseChart({
   monthlyTotals,
@@ -21,14 +33,37 @@ export default function ExpenseChart({
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
 
+  const chartDims = getChartDimensions();
+  const horizontalPadding = getScreenHorizontalPadding();
+  // Bar width should adapt: thinner bars on small phones so 6 months fit.
+  const barWidth = pickByDevice({
+    small: 22,
+    medium: 28,
+    large: 32,
+    tablet: 44,
+  });
+  const barSpacing = pickByDevice({
+    small: 12,
+    medium: 16,
+    large: 18,
+    tablet: 24,
+  });
+
   // Prepare bar chart data (reverse to show oldest first)
   const barData = [...monthlyTotals].reverse().map((item) => ({
     value: item.total,
     label: item.month.substring(5), // "01", "02", etc
     frontColor: COLORS.primary,
     topLabelComponent: () => (
-      <Text style={{ fontSize: 9, color: theme.textSecondary, marginBottom: 2 }}>
-        {currency}{Math.round(item.total)}
+      <Text
+        style={{
+          fontSize: rf(9),
+          color: theme.textSecondary,
+          marginBottom: 2,
+        }}
+      >
+        {currency}
+        {Math.round(item.total)}
       </Text>
     ),
   }));
@@ -47,26 +82,37 @@ export default function ExpenseChart({
     <View style={styles.container}>
       {/* Monthly Bar Chart */}
       {barData.length > 0 && (
-        <View style={[styles.chartCard, { backgroundColor: theme.surface }]}>
+        <View
+          style={[
+            styles.chartCard,
+            { backgroundColor: theme.surface, marginHorizontal: horizontalPadding },
+          ]}
+        >
           <Text style={[styles.chartTitle, { color: theme.text }]}>
             Monthly Spending
           </Text>
           <View style={styles.barChartWrapper}>
             <BarChart
               data={barData}
-              barWidth={28}
-              spacing={16}
+              barWidth={barWidth}
+              spacing={barSpacing}
               roundedTop
               roundedBottom
               hideRules
               xAxisThickness={0}
               yAxisThickness={0}
-              yAxisTextStyle={{ color: theme.textSecondary, fontSize: 10 }}
-              xAxisLabelTextStyle={{ color: theme.textSecondary, fontSize: 10 }}
+              yAxisTextStyle={{
+                color: theme.textSecondary,
+                fontSize: rf(10),
+              }}
+              xAxisLabelTextStyle={{
+                color: theme.textSecondary,
+                fontSize: rf(10),
+              }}
               noOfSections={4}
               maxValue={Math.max(...barData.map((d) => d.value)) * 1.2 || 100}
-              width={screenWidth - 100}
-              height={150}
+              width={chartDims.barWidth}
+              height={chartDims.barHeight}
               isAnimated
             />
           </View>
@@ -75,7 +121,12 @@ export default function ExpenseChart({
 
       {/* Category Pie Chart */}
       {pieData.length > 0 && (
-        <View style={[styles.chartCard, { backgroundColor: theme.surface }]}>
+        <View
+          style={[
+            styles.chartCard,
+            { backgroundColor: theme.surface, marginHorizontal: horizontalPadding },
+          ]}
+        >
           <Text style={[styles.chartTitle, { color: theme.text }]}>
             By Category
           </Text>
@@ -84,14 +135,17 @@ export default function ExpenseChart({
             <PieChart
               data={pieData}
               donut
-              radius={70}
-              innerRadius={45}
+              radius={chartDims.pieRadius}
+              innerRadius={chartDims.pieInnerRadius}
               centerLabelComponent={() => (
                 <View style={styles.pieCenter}>
                   <Text style={[styles.pieCenterAmount, { color: theme.text }]}>
-                    {currency}{Math.round(totalSpent)}
+                    {currency}
+                    {Math.round(totalSpent)}
                   </Text>
-                  <Text style={[styles.pieCenterLabel, { color: theme.textSecondary }]}>
+                  <Text
+                    style={[styles.pieCenterLabel, { color: theme.textSecondary }]}
+                  >
                     Total
                   </Text>
                 </View>
@@ -102,7 +156,9 @@ export default function ExpenseChart({
             <View style={styles.legend}>
               {categoryTotals.slice(0, 5).map((item) => (
                 <View key={item.category} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+                  <View
+                    style={[styles.legendDot, { backgroundColor: item.color }]}
+                  />
                   <Text
                     style={[styles.legendText, { color: theme.textSecondary }]}
                     numberOfLines={1}
@@ -110,7 +166,8 @@ export default function ExpenseChart({
                     {CATEGORY_CONFIG[item.category]?.label ?? item.category}
                   </Text>
                   <Text style={[styles.legendValue, { color: theme.text }]}>
-                    {currency}{Math.round(item.total)}
+                    {currency}
+                    {Math.round(item.total)}
                   </Text>
                 </View>
               ))}
@@ -120,9 +177,16 @@ export default function ExpenseChart({
       )}
 
       {barData.length === 0 && pieData.length === 0 && (
-        <View style={[styles.chartCard, { backgroundColor: theme.surface }]}>
+        <View
+          style={[
+            styles.chartCard,
+            { backgroundColor: theme.surface, marginHorizontal: horizontalPadding },
+          ]}
+        >
           <View style={styles.emptyState}>
-            <Text style={{ fontSize: 40, marginBottom: 8 }}>📊</Text>
+            <Text style={{ fontSize: rf(40), marginBottom: rs(SPACING.sm) }}>
+              📊
+            </Text>
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
               Add expenses to see charts
             </Text>
@@ -135,12 +199,11 @@ export default function ExpenseChart({
 
 const styles = StyleSheet.create({
   container: {
-    gap: 16,
+    gap: rs(SPACING.lg),
   },
   chartCard: {
-    borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 16,
+    borderRadius: rr(RADIUS.xxl),
+    padding: rs(SPACING.lg),
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -148,9 +211,9 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   chartTitle: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
     fontWeight: '600',
-    marginBottom: 16,
+    marginBottom: rs(SPACING.lg),
   },
   barChartWrapper: {
     alignItems: 'center',
@@ -164,40 +227,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pieCenterAmount: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
     fontWeight: '700',
   },
   pieCenterLabel: {
-    fontSize: 10,
+    fontSize: rf(FONT_SIZES.caption),
   },
   legend: {
     flex: 1,
-    marginLeft: 20,
-    gap: 8,
+    marginLeft: rs(SPACING.xl),
+    gap: rs(SPACING.sm),
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: rs(6),
   },
   legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: rs(8),
+    height: rs(8),
+    borderRadius: rs(4),
   },
   legendText: {
-    fontSize: 12,
+    fontSize: rf(FONT_SIZES.small),
     flex: 1,
   },
   legendValue: {
-    fontSize: 12,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '600',
   },
   emptyState: {
     alignItems: 'center',
-    paddingVertical: 32,
+    paddingVertical: rs(SPACING.xxxl),
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: rf(FONT_SIZES.body),
   },
 });

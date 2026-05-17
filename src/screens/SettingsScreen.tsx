@@ -8,13 +8,28 @@ import {
   Switch,
   useColorScheme,
   Alert,
-  Linking,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, CURRENCIES } from '../utils/constants';
+import {
+  COLORS,
+  CURRENCIES,
+  FONT_SIZES,
+  SPACING,
+  RADIUS,
+} from '../utils/constants';
+import {
+  rf,
+  rs,
+  rr,
+  ri,
+  getScreenHorizontalPadding,
+  getMaxContentWidth,
+} from '../utils/responsive';
 import { getSetting, setSetting } from '../services/database';
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
@@ -46,6 +61,9 @@ export default function SettingsScreen() {
     setSetting('hapticFeedback', String(value));
   };
 
+  const horizontalPadding = getScreenHorizontalPadding();
+  const maxContentWidth = getMaxContentWidth();
+
   const renderSettingRow = (
     icon: string,
     label: string,
@@ -54,44 +72,82 @@ export default function SettingsScreen() {
     onPress?: () => void
   ) => (
     <TouchableOpacity
-      style={[styles.settingRow, { backgroundColor: theme.surface }]}
+      style={[
+        styles.settingRow,
+        { backgroundColor: theme.surface, marginHorizontal: horizontalPadding },
+      ]}
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
     >
       <View style={[styles.settingIcon, { backgroundColor: COLORS.primary + '15' }]}>
-        <Ionicons name={icon as any} size={18} color={COLORS.primary} />
+        <Ionicons name={icon as any} size={ri(18)} color={COLORS.primary} />
       </View>
       <View style={styles.settingInfo}>
-        <Text style={[styles.settingLabel, { color: theme.text }]}>{label}</Text>
+        <Text
+          style={[styles.settingLabel, { color: theme.text }]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
         {subtitle && (
-          <Text style={[styles.settingSubtitle, { color: theme.textSecondary }]}>
+          <Text
+            style={[styles.settingSubtitle, { color: theme.textSecondary }]}
+            numberOfLines={2}
+          >
             {subtitle}
           </Text>
         )}
       </View>
       {right || (
-        <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />
+        <Ionicons name="chevron-forward" size={ri(16)} color={theme.textTertiary} />
       )}
     </TouchableOpacity>
   );
 
+  const headerTopPadding = Math.max(insets.top, rs(12)) + rs(8);
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.background }]}
+      contentContainerStyle={{
+        paddingBottom: insets.bottom + rs(100),
+        alignSelf: 'center',
+        width: '100%',
+        maxWidth: maxContentWidth,
+      }}
       showsVerticalScrollIndicator={false}
     >
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={[styles.greeting, { color: theme.textSecondary }]}>
+      <View
+        style={[
+          styles.header,
+          { paddingTop: headerTopPadding, paddingHorizontal: horizontalPadding },
+        ]}
+      >
+        <Text
+          style={[styles.greeting, { color: theme.textSecondary }]}
+          numberOfLines={1}
+        >
           Preferences
         </Text>
-        <Text style={[styles.title, { color: theme.text }]}>Settings</Text>
+        <Text
+          style={[styles.title, { color: theme.text }]}
+          numberOfLines={1}
+          allowFontScaling={false}
+        >
+          Settings
+        </Text>
       </View>
 
       {/* App Info Card */}
-      <View style={[styles.appCard, { backgroundColor: COLORS.primary }]}>
+      <View
+        style={[
+          styles.appCard,
+          { backgroundColor: COLORS.primary, marginHorizontal: horizontalPadding },
+        ]}
+      >
         <View style={styles.appIcon}>
-          <Text style={{ fontSize: 32 }}>🎓</Text>
+          <Text style={{ fontSize: rf(32) }}>🎓</Text>
         </View>
         <View style={styles.appInfo}>
           <Text style={styles.appName}>StudentOS</Text>
@@ -101,7 +157,12 @@ export default function SettingsScreen() {
 
       {/* General Section */}
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+        <Text
+          style={[
+            styles.sectionTitle,
+            { color: theme.textSecondary, paddingHorizontal: horizontalPadding + rs(4) },
+          ]}
+        >
           GENERAL
         </Text>
         {renderSettingRow(
@@ -139,7 +200,12 @@ export default function SettingsScreen() {
 
       {/* Data Section */}
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+        <Text
+          style={[
+            styles.sectionTitle,
+            { color: theme.textSecondary, paddingHorizontal: horizontalPadding + rs(4) },
+          ]}
+        >
           DATA
         </Text>
         {renderSettingRow(
@@ -178,18 +244,23 @@ export default function SettingsScreen() {
 
       {/* About Section */}
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+        <Text
+          style={[
+            styles.sectionTitle,
+            { color: theme.textSecondary, paddingHorizontal: horizontalPadding + rs(4) },
+          ]}
+        >
           ABOUT
         </Text>
         {renderSettingRow(
           'information-circle-outline',
           'About StudentOS',
-          'Built for students, by students',
+          'Built for students, by students'
         )}
         {renderSettingRow(
           'heart-outline',
           'Rate the App',
-          'If you enjoy using StudentOS',
+          'If you enjoy using StudentOS'
         )}
       </View>
 
@@ -211,98 +282,96 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingBottom: rs(SPACING.md),
   },
   greeting: {
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   title: {
-    fontSize: 28,
+    fontSize: rf(FONT_SIZES.display),
     fontWeight: '700',
-    marginTop: 2,
+    marginTop: rs(2),
+    lineHeight: rf(FONT_SIZES.display) * 1.2,
   },
   appCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 16,
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 24,
+    borderRadius: rr(RADIUS.xxl),
+    padding: rs(SPACING.xl),
+    marginBottom: rs(SPACING.xxl),
   },
   appIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
+    width: ri(56),
+    height: ri(56),
+    borderRadius: rr(RADIUS.xl),
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 16,
+    marginRight: rs(SPACING.lg),
   },
-  appInfo: {},
+  appInfo: {
+    flex: 1,
+  },
   appName: {
     color: '#FFF',
-    fontSize: 20,
+    fontSize: rf(FONT_SIZES.titleLarge),
     fontWeight: '700',
   },
   appVersion: {
     color: 'rgba(255,255,255,0.7)',
-    fontSize: 13,
-    marginTop: 2,
+    fontSize: rf(FONT_SIZES.small),
+    marginTop: rs(2),
   },
   section: {
-    marginBottom: 24,
+    marginBottom: rs(SPACING.xxl),
   },
   sectionTitle: {
-    fontSize: 11,
+    fontSize: rf(FONT_SIZES.caption),
     fontWeight: '600',
     letterSpacing: 1,
-    paddingHorizontal: 20,
-    marginBottom: 8,
+    marginBottom: rs(SPACING.sm),
   },
   settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginHorizontal: 16,
-    marginVertical: 2,
-    borderRadius: 12,
+    paddingHorizontal: rs(SPACING.lg),
+    paddingVertical: rs(SPACING.md + 2),
+    marginVertical: rs(2),
+    borderRadius: rr(RADIUS.lg),
   },
   settingIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+    width: ri(34),
+    height: ri(34),
+    borderRadius: rr(RADIUS.sm),
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: rs(SPACING.md),
   },
   settingInfo: {
     flex: 1,
+    paddingRight: rs(SPACING.sm),
   },
   settingLabel: {
-    fontSize: 15,
+    fontSize: rf(FONT_SIZES.bodyLarge),
     fontWeight: '500',
   },
   settingSubtitle: {
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: rf(FONT_SIZES.small),
+    marginTop: rs(2),
   },
   currencyValue: {
-    fontSize: 18,
+    fontSize: rf(FONT_SIZES.title),
     fontWeight: '700',
   },
   footer: {
     alignItems: 'center',
-    paddingVertical: 32,
-    paddingBottom: 100,
+    paddingVertical: rs(SPACING.xxxl),
   },
   footerText: {
-    fontSize: 12,
-    marginBottom: 4,
+    fontSize: rf(FONT_SIZES.small),
+    marginBottom: rs(SPACING.xs),
   },
 });

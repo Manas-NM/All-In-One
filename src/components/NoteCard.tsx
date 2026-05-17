@@ -8,7 +8,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Note } from '../types';
-import { COLORS } from '../utils/constants';
+import { COLORS, FONT_SIZES, SPACING, RADIUS } from '../utils/constants';
+import {
+  rf,
+  rs,
+  rr,
+  ri,
+  getScreenHorizontalPadding,
+} from '../utils/responsive';
 
 interface NoteCardProps {
   note: Note;
@@ -37,11 +44,19 @@ export default function NoteCard({
   };
 
   const hasDrawing = note.content && note.content !== '[]';
-  const preview = note.textContent.substring(0, 80);
+  const preview = note.textContent.substring(0, 120);
+  const horizontalPadding = getScreenHorizontalPadding();
 
   return (
     <TouchableOpacity
-      style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}
+      style={[
+        styles.card,
+        {
+          backgroundColor: theme.surface,
+          shadowColor: theme.shadow,
+          marginHorizontal: horizontalPadding,
+        },
+      ]}
       onPress={onPress}
       activeOpacity={0.7}
     >
@@ -57,10 +72,13 @@ export default function NoteCard({
           >
             {note.title || 'Untitled Note'}
           </Text>
-          <TouchableOpacity onPress={onToggleFavorite} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity
+            onPress={onToggleFavorite}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons
               name={note.isFavorite ? 'star' : 'star-outline'}
-              size={18}
+              size={ri(18)}
               color={note.isFavorite ? COLORS.warning : theme.textTertiary}
             />
           </TouchableOpacity>
@@ -76,7 +94,7 @@ export default function NoteCard({
           </Text>
         ) : hasDrawing ? (
           <View style={styles.drawingBadge}>
-            <Ionicons name="brush-outline" size={12} color={COLORS.primary} />
+            <Ionicons name="brush-outline" size={ri(12)} color={COLORS.primary} />
             <Text style={[styles.drawingText, { color: COLORS.primary }]}>
               Contains drawing
             </Text>
@@ -88,8 +106,11 @@ export default function NoteCard({
           <Text style={[styles.date, { color: theme.textTertiary }]}>
             {formatDate(note.updatedAt)}
           </Text>
-          <TouchableOpacity onPress={onDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="trash-outline" size={16} color={theme.textTertiary} />
+          <TouchableOpacity
+            onPress={onDelete}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="trash-outline" size={ri(16)} color={theme.textTertiary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -100,9 +121,8 @@ export default function NoteCard({
 const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
-    borderRadius: 14,
-    marginHorizontal: 16,
-    marginVertical: 6,
+    borderRadius: rr(RADIUS.xl),
+    marginVertical: rs(6),
     elevation: 2,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -110,37 +130,37 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   accentBar: {
-    width: 5,
+    width: rs(5),
   },
   content: {
     flex: 1,
-    padding: 14,
+    padding: rs(SPACING.md + 2),
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: rs(6),
   },
   title: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
     fontWeight: '600',
     flex: 1,
-    marginRight: 8,
+    marginRight: rs(SPACING.sm),
   },
   preview: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 8,
+    fontSize: rf(FONT_SIZES.body),
+    lineHeight: rf(FONT_SIZES.body) * 1.4,
+    marginBottom: rs(SPACING.sm),
   },
   drawingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginBottom: 8,
+    gap: rs(SPACING.xs),
+    marginBottom: rs(SPACING.sm),
   },
   drawingText: {
-    fontSize: 12,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
   },
   footer: {
@@ -149,6 +169,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   date: {
-    fontSize: 11,
+    fontSize: rf(FONT_SIZES.caption),
   },
 });

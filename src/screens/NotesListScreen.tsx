@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,16 +11,25 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNotesStore } from '../store/notesStore';
 import NoteCard from '../components/NoteCard';
 import { NotesStackParamList } from '../types';
-import { COLORS, NOTE_CARD_COLORS } from '../utils/constants';
+import { COLORS, FONT_SIZES, SPACING, RADIUS } from '../utils/constants';
+import {
+  rf,
+  rs,
+  ri,
+  getScreenHorizontalPadding,
+  getMaxContentWidth,
+} from '../utils/responsive';
 
 type NavProp = NativeStackNavigationProp<NotesStackParamList, 'NotesList'>;
 
 export default function NotesListScreen() {
   const navigation = useNavigation<NavProp>();
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
@@ -59,30 +68,52 @@ export default function NotesListScreen() {
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
   });
 
+  // Mirrors the FinanceScreen header math so all screens line up at the
+  // same vertical baseline regardless of device.
+  const headerTopPadding = Math.max(insets.top, rs(12)) + rs(8);
+  const horizontalPadding = getScreenHorizontalPadding();
+  const maxContentWidth = getMaxContentWidth();
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={[styles.greeting, { color: theme.textSecondary }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: headerTopPadding,
+            paddingHorizontal: horizontalPadding,
+          },
+        ]}
+      >
+        <View style={styles.headerTextWrap}>
+          <Text
+            style={[styles.greeting, { color: theme.textSecondary }]}
+            numberOfLines={1}
+          >
             Your Notes
           </Text>
-          <Text style={[styles.title, { color: theme.text }]}>
+          <Text
+            style={[styles.title, { color: theme.text }]}
+            numberOfLines={1}
+            allowFontScaling={false}
+          >
             {notes.length} {notes.length === 1 ? 'note' : 'notes'}
           </Text>
         </View>
         <TouchableOpacity
           style={[styles.addButton, { backgroundColor: COLORS.primary }]}
           onPress={handleCreateNote}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons name="add" size={24} color="#FFF" />
+          <Ionicons name="add" size={ri(24)} color="#FFF" />
         </TouchableOpacity>
       </View>
 
       {/* Notes List */}
       {notes.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={{ fontSize: 56, marginBottom: 16 }}>📝</Text>
+        <View style={[styles.emptyState, { paddingBottom: insets.bottom + rs(100) }]}>
+          <Text style={{ fontSize: rf(56), marginBottom: rs(16) }}>📝</Text>
           <Text style={[styles.emptyTitle, { color: theme.text }]}>
             No notes yet
           </Text>
@@ -95,14 +126,25 @@ export default function NotesListScreen() {
           data={sortedNotes}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <NoteCard
-              note={item}
-              onPress={() => navigation.navigate('NoteEditor', { noteId: item.id })}
-              onToggleFavorite={() => toggleFavorite(item.id)}
-              onDelete={() => handleDeleteNote(item.id, item.title)}
-            />
+            <View
+              style={{
+                alignSelf: 'center',
+                width: '100%',
+                maxWidth: maxContentWidth,
+              }}
+            >
+              <NoteCard
+                note={item}
+                onPress={() => navigation.navigate('NoteEditor', { noteId: item.id })}
+                onToggleFavorite={() => toggleFavorite(item.id)}
+                onDelete={() => handleDeleteNote(item.id, item.title)}
+              />
+            </View>
           )}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: insets.bottom + rs(100) },
+          ]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -124,26 +166,29 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
+    alignItems: 'flex-end',
+    paddingBottom: rs(SPACING.md),
+  },
+  headerTextWrap: {
+    flex: 1,
+    paddingRight: rs(SPACING.md),
   },
   greeting: {
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   title: {
-    fontSize: 28,
+    fontSize: rf(FONT_SIZES.display),
     fontWeight: '700',
-    marginTop: 2,
+    marginTop: rs(2),
+    lineHeight: rf(FONT_SIZES.display) * 1.2,
   },
   addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: ri(44),
+    height: ri(44),
+    borderRadius: ri(44) / 2,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: COLORS.primary,
@@ -153,23 +198,21 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   list: {
-    paddingVertical: 8,
-    paddingBottom: 100,
+    paddingVertical: rs(SPACING.sm),
   },
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 100,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: rf(FONT_SIZES.titleLarge),
     fontWeight: '600',
-    marginBottom: 8,
+    marginBottom: rs(SPACING.sm),
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: rf(FONT_SIZES.body),
     textAlign: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: rs(SPACING.huge),
   },
 });

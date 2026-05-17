@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFinanceStore } from '../store/financeStore';
 import ExpenseChart from '../components/ExpenseChart';
 import ExpenseForm from '../components/ExpenseForm';
-import { COLORS, CATEGORY_CONFIG } from '../utils/constants';
+import {
+  COLORS,
+  CATEGORY_CONFIG,
+  FONT_SIZES,
+  SPACING,
+  RADIUS,
+  HIT_SIZES,
+} from '../utils/constants';
+import {
+  rf,
+  rs,
+  rr,
+  ri,
+  getScreenHorizontalPadding,
+  getMaxContentWidth,
+  isTablet,
+} from '../utils/responsive';
 import { Expense, ExpenseCategory } from '../types';
 import { getSetting } from '../services/database';
 
@@ -91,53 +107,69 @@ export default function FinanceScreen() {
   };
 
   const total = getTotalForMonth();
+  const horizontalPadding = getScreenHorizontalPadding();
+  const maxContentWidth = getMaxContentWidth();
 
   const renderExpenseItem = ({ item }: { item: Expense }) => {
     const config = CATEGORY_CONFIG[item.category];
     return (
-      <TouchableOpacity
-        style={[styles.expenseItem, { backgroundColor: theme.surface }]}
-        onLongPress={() => handleDeleteExpense(item.id)}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.expenseIcon, { backgroundColor: config.color + '20' }]}>
-          <Ionicons name={config.icon as any} size={18} color={config.color} />
-        </View>
-        <View style={styles.expenseInfo}>
-          <Text style={[styles.expenseDesc, { color: theme.text }]}>
-            {item.description || config.label}
+      <View style={styles.contentRow}>
+        <TouchableOpacity
+          style={[
+            styles.expenseItem,
+            {
+              backgroundColor: theme.surface,
+              maxWidth: maxContentWidth,
+              marginHorizontal: horizontalPadding,
+            },
+          ]}
+          onLongPress={() => handleDeleteExpense(item.id)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.expenseIcon, { backgroundColor: config.color + '20' }]}>
+            <Ionicons name={config.icon as any} size={ri(18)} color={config.color} />
+          </View>
+          <View style={styles.expenseInfo}>
+            <Text style={[styles.expenseDesc, { color: theme.text }]} numberOfLines={1}>
+              {item.description || config.label}
+            </Text>
+            <Text style={[styles.expenseDate, { color: theme.textTertiary }]}>
+              {new Date(item.date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              })}
+            </Text>
+          </View>
+          <Text style={[styles.expenseAmount, { color: COLORS.error }]}>
+            -{currency}{item.amount.toFixed(2)}
           </Text>
-          <Text style={[styles.expenseDate, { color: theme.textTertiary }]}>
-            {new Date(item.date).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            })}
-          </Text>
-        </View>
-        <Text style={[styles.expenseAmount, { color: COLORS.error }]}>
-          -{currency}{item.amount.toFixed(2)}
-        </Text>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
     );
   };
 
   const ListHeader = () => (
-    <View>
+    <View style={{ width: '100%', alignSelf: 'center', maxWidth: maxContentWidth }}>
       {/* Month Selector */}
       <View style={styles.monthSelector}>
         <TouchableOpacity onPress={() => navigateMonth(-1)} style={styles.monthArrow}>
-          <Ionicons name="chevron-back" size={20} color={COLORS.primary} />
+          <Ionicons name="chevron-back" size={ri(20)} color={COLORS.primary} />
         </TouchableOpacity>
         <Text style={[styles.monthText, { color: theme.text }]}>
           {formatMonth(selectedMonth)}
         </Text>
         <TouchableOpacity onPress={() => navigateMonth(1)} style={styles.monthArrow}>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.primary} />
+          <Ionicons name="chevron-forward" size={ri(20)} color={COLORS.primary} />
         </TouchableOpacity>
       </View>
 
       {/* Total Card */}
-      <View style={[styles.totalCard, { backgroundColor: COLORS.primary }]}>
+      <View
+        style={[
+          styles.totalCard,
+          { backgroundColor: COLORS.primary, marginHorizontal: horizontalPadding },
+        ]}
+      >
         <Text style={styles.totalLabel}>Total Spent</Text>
         <Text style={styles.totalAmount}>
           {currency}{total.toFixed(2)}
@@ -148,7 +180,15 @@ export default function FinanceScreen() {
       </View>
 
       {/* View Toggle */}
-      <View style={[styles.toggleRow, { backgroundColor: theme.surfaceSecondary }]}>
+      <View
+        style={[
+          styles.toggleRow,
+          {
+            backgroundColor: theme.surfaceSecondary,
+            marginHorizontal: horizontalPadding,
+          },
+        ]}
+      >
         <TouchableOpacity
           style={[styles.toggleButton, viewMode === 'list' && styles.toggleActive]}
           onPress={() => setViewMode('list')}
@@ -187,7 +227,7 @@ export default function FinanceScreen() {
 
       {viewMode === 'list' && expenses.length === 0 && (
         <View style={styles.emptyState}>
-          <Text style={{ fontSize: 48, marginBottom: 12 }}>💸</Text>
+          <Text style={{ fontSize: rf(48), marginBottom: rs(12) }}>💸</Text>
           <Text style={[styles.emptyTitle, { color: theme.text }]}>
             No expenses this month
           </Text>
@@ -199,21 +239,46 @@ export default function FinanceScreen() {
     </View>
   );
 
+  // Calculate proper top padding: safe area inset + breathing room.
+  // The previous version used insets.top + 12 which still felt tight on
+  // notched devices because the title's line-height pushed it into the
+  // status bar / dynamic island. Adding a baseline of rs(16) ensures
+  // visual separation on all devices including iPhone SE (no notch).
+  const headerTopPadding = Math.max(insets.top, rs(12)) + rs(8);
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <View>
-          <Text style={[styles.greeting, { color: theme.textSecondary }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: headerTopPadding,
+            paddingHorizontal: horizontalPadding,
+          },
+        ]}
+      >
+        <View style={styles.headerTextWrap}>
+          <Text
+            style={[styles.greeting, { color: theme.textSecondary }]}
+            numberOfLines={1}
+          >
             Finance Tracker
           </Text>
-          <Text style={[styles.title, { color: theme.text }]}>Expenses</Text>
+          <Text
+            style={[styles.title, { color: theme.text }]}
+            numberOfLines={1}
+            allowFontScaling={false}
+          >
+            Expenses
+          </Text>
         </View>
         <TouchableOpacity
           style={[styles.addButton, { backgroundColor: COLORS.primary }]}
           onPress={() => setShowForm(true)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons name="add" size={24} color="#FFF" />
+          <Ionicons name="add" size={ri(24)} color="#FFF" />
         </TouchableOpacity>
       </View>
 
@@ -222,7 +287,7 @@ export default function FinanceScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderExpenseItem}
         ListHeaderComponent={ListHeader}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + rs(100) }]}
         showsVerticalScrollIndicator={false}
       />
 
@@ -244,26 +309,31 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
+    alignItems: 'flex-end',
+    paddingBottom: rs(SPACING.sm),
+    // The top padding is set dynamically based on safe-area insets.
+  },
+  headerTextWrap: {
+    flex: 1,
+    paddingRight: rs(SPACING.md),
   },
   greeting: {
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   title: {
-    fontSize: 28,
+    fontSize: rf(FONT_SIZES.display),
     fontWeight: '700',
-    marginTop: 2,
+    marginTop: rs(2),
+    // Increase line height a touch so descenders don't get cropped.
+    lineHeight: rf(FONT_SIZES.display) * 1.2,
   },
   addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: ri(44),
+    height: ri(44),
+    borderRadius: ri(44) / 2,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: COLORS.primary,
@@ -276,102 +346,105 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: rs(SPACING.md),
   },
   monthArrow: {
-    padding: 8,
+    padding: rs(SPACING.sm),
   },
   monthText: {
-    fontSize: 16,
+    fontSize: rf(FONT_SIZES.subtitle),
     fontWeight: '600',
-    marginHorizontal: 16,
+    marginHorizontal: rs(SPACING.lg),
   },
   totalCard: {
-    marginHorizontal: 16,
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: rr(RADIUS.xxl),
+    padding: rs(SPACING.xxl),
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: rs(SPACING.lg),
   },
   totalLabel: {
     color: 'rgba(255,255,255,0.7)',
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '500',
   },
   totalAmount: {
     color: '#FFF',
-    fontSize: 36,
+    fontSize: rf(FONT_SIZES.amount),
     fontWeight: '800',
-    marginVertical: 4,
+    marginVertical: rs(SPACING.xs),
   },
   totalSub: {
     color: 'rgba(255,255,255,0.6)',
-    fontSize: 12,
+    fontSize: rf(FONT_SIZES.small),
   },
   toggleRow: {
     flexDirection: 'row',
-    marginHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: rr(RADIUS.md),
     padding: 3,
-    marginBottom: 16,
+    marginBottom: rs(SPACING.lg),
   },
   toggleButton: {
     flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: rs(SPACING.sm),
+    borderRadius: rr(RADIUS.sm),
     alignItems: 'center',
   },
   toggleActive: {
     backgroundColor: COLORS.primary,
   },
   toggleText: {
-    fontSize: 13,
+    fontSize: rf(FONT_SIZES.body),
     fontWeight: '600',
   },
   list: {
-    paddingBottom: 100,
+    // Bottom padding is set dynamically based on safe-area insets.
+  },
+  contentRow: {
+    width: '100%',
+    alignSelf: 'center',
+    maxWidth: getMaxContentWidth(),
   },
   expenseItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 16,
-    marginVertical: 4,
-    padding: 14,
-    borderRadius: 12,
+    marginVertical: rs(SPACING.xs),
+    padding: rs(SPACING.md + 2),
+    borderRadius: rr(RADIUS.lg),
   },
   expenseIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: ri(40),
+    height: ri(40),
+    borderRadius: rr(RADIUS.lg),
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: rs(SPACING.md),
   },
   expenseInfo: {
     flex: 1,
   },
   expenseDesc: {
-    fontSize: 15,
+    fontSize: rf(FONT_SIZES.bodyLarge),
     fontWeight: '500',
   },
   expenseDate: {
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: rf(FONT_SIZES.small),
+    marginTop: rs(2),
   },
   expenseAmount: {
-    fontSize: 15,
+    fontSize: rf(FONT_SIZES.bodyLarge),
     fontWeight: '700',
+    marginLeft: rs(SPACING.sm),
   },
   emptyState: {
     alignItems: 'center',
-    paddingVertical: 40,
+    paddingVertical: rs(SPACING.huge),
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: rf(FONT_SIZES.title),
     fontWeight: '600',
-    marginBottom: 6,
+    marginBottom: rs(SPACING.xs + 2),
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: rf(FONT_SIZES.body),
   },
 });
