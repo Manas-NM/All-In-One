@@ -14,16 +14,22 @@ import {
   useColorScheme,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DrawingCanvas from '../components/DrawingCanvas';
 import TaskForm from '../components/TaskForm';
+import FlashcardGenerator from '../components/FlashcardGenerator';
+import PrintPreviewModal from '../components/PrintPreviewModal';
 import { useNotesStore } from '../store/notesStore';
 import { useSubjectsStore } from '../store/subjectsStore';
 import { useTasksStore } from '../store/tasksStore';
+import { useFlashcardsStore } from '../store/flashcardsStore';
 import { exportNoteToPdf } from '../services/storage';
 import { getNoteById } from '../services/database';
 import { summarizeNote } from '../services/aiService';
+import { recognizeTextFromCanvas, strokesToSvg } from '../services/ocrService';
+import { printNote } from '../services/printService';
 import { Stroke, NotesStackParamList, Subject, Task } from '../types';
 import {
   COLORS,
@@ -44,9 +50,10 @@ import {
 } from '../utils/responsive';
 
 type EditorRoute = RouteProp<NotesStackParamList, 'NoteEditor'>;
+type NavProp = NativeStackNavigationProp<NotesStackParamList>;
 
 export default function NoteEditorScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavProp>();
   const route = useRoute<EditorRoute>();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -70,11 +77,26 @@ export default function NoteEditorScreen() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [subjectId, setSubjectId] = useState<string | null>(null);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [ocrText, setOcrText] = useState<string | null>(null);
   const [showSubjectPicker, setShowSubjectPicker] = useState(false);
   const [showAiModal, setShowAiModal] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [tempSummary, setTempSummary] = useState<string>('');
   const [showTaskForm, setShowTaskForm] = useState(false);
+  // OCR state
+  const [showOcrModal, setShowOcrModal] = useState(false);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrResult, setOcrResult] = useState<string>('');
+  // Flashcard generator
+  const [showFlashcardGen, setShowFlashcardGen] = useState(false);
+  // Print
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printOptions, setPrintOptions] = useState({
+    includeDrawing: true,
+    includeSummary: true,
+    includeOcrText: false,
+  });
+
   const hasChanges = useRef(false);
 
   useEffect(() => {
@@ -97,6 +119,7 @@ export default function NoteEditorScreen() {
         setNoteColor(note.color);
         setSubjectId(note.subjectId);
         setAiSummary(note.aiSummary);
+        setOcrText(note.ocrText ?? null);
         try {
           const parsed = JSON.parse(note.content);
           if (Array.isArray(parsed)) setStrokes(parsed);
@@ -122,6 +145,7 @@ export default function NoteEditorScreen() {
           isFavorite: false,
           subjectId,
           aiSummary,
+          ocrText,
         });
       } else if (noteId) {
         await updateNote(noteId, {
@@ -131,13 +155,14 @@ export default function NoteEditorScreen() {
           color: noteColor,
           subjectId,
           aiSummary,
+          ocrText,
         });
       }
       navigation.goBack();
     } catch (error) {
       Alert.alert('Error', 'Failed to save note. Please try again.');
     }
-  }, [title, textContent, strokes, noteColor, isNew, noteId, subjectId, aiSummary]);
+  }, [title, textContent, strokes, noteColor, isNew, noteId, subjectId, aiSummary, ocrText]);
 
   const handleExportPdf = async () => {
     try {
@@ -195,6 +220,95 @@ export default function NoteEditorScreen() {
     }
   };
 
+  // ─── OCR ──────────────────────────────────────────────────────
+
+  const handleOcr = async () => {
+    if (strokes.length === 0) {
+      Alert.alert('No Drawing', 'Draw something on the canvas first to extract text.');
+      return;
+    }
+    setOcrLoading(true);
+    setShowOcrModal(true);
+    setOcrResult('');
+
+    try {
+      // Generate SVG from strokes and convert to a basic base64 representation
+      const { width, height } = getCanvasDimensions();
+      const svg = strokesToSvg(strokes, width, height);
+      // Convert SVG to base64 for the API
+      const base64 = btoa(unescape(encodeURIComponent(svg)));
+
+      const result = await recognizeTextFromCanvas(base64);
+      setOcrLoading(false);
+
+      if (result.error) {
+        setOcrResult('');
+        Alert.alert('OCR Error', result.error);
+        setShowOcrModal(false);
+      } else {
+        setOcrResult(result.text);
+      }
+    } catch (e: any) {
+      setOcrLoading(false);
+      Alert.alert('OCR Error', e.message || 'Failed to extract text.');
+      setShowOcrModal(false);
+    }
+  };
+
+  const handleSaveOcrText = () => {
+    setOcrText(ocrResult);
+    setShowOcrModal(false);
+    hasChanges.current = true;
+  };
+
+  // ─── Flashcard Generation ─────────────────────────────────────
+
+  const handleSaveFlashcards = async (cards: { front: string; back: string }[]) => {
+    try {
+      const deck = await useFlashcardsStore.getState().createDeck({
+        name: `From: ${title.trim() || 'Untitled Note'}`,
+        description: `Generated from note`,
+        subjectId: subjectId,
+        noteId: noteId ?? null,
+      });
+      await useFlashcardsStore.getState().addBulkCards(deck.id, cards);
+      Alert.alert('Success', `Created deck with ${cards.length} flashcards!`);
+    } catch {
+      Alert.alert('Error', 'Failed to save flashcards.');
+    }
+  };
+
+  // ─── Print ────────────────────────────────────────────────────
+
+  const handlePrint = async () => {
+    setShowPrintModal(false);
+    try {
+      const note = {
+        id: noteId ?? '',
+        title: title.trim() || 'Untitled Note',
+        content: JSON.stringify(strokes),
+        textContent,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        color: noteColor,
+        isFavorite: false,
+        subjectId,
+        aiSummary,
+        ocrText,
+      };
+      const { width, height } = getCanvasDimensions();
+      await printNote(note, strokes, {
+        includeDrawing: printOptions.includeDrawing,
+        includeSummary: printOptions.includeSummary,
+        includeOcrText: printOptions.includeOcrText,
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+    } catch {
+      Alert.alert('Print Error', 'Failed to print note.');
+    }
+  };
+
   const selectedSubject = subjects.find((s) => s.id === subjectId);
   const linkedTasks = noteId ? tasks.filter((t) => t.noteId === noteId) : [];
   const headerTopPadding = Math.max(insets.top, rs(8)) + rs(4);
@@ -245,6 +359,13 @@ export default function NoteEditorScreen() {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <View style={[styles.colorIndicator, { backgroundColor: noteColor }]} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => setShowPrintModal(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="print-outline" size={ri(20)} color={theme.text} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
@@ -427,16 +548,41 @@ export default function NoteEditorScreen() {
           />
         </View>
 
-        {/* AI Summarize Button */}
-        <TouchableOpacity
-          style={[styles.aiButton, { backgroundColor: COLORS.primary + '12' }]}
-          onPress={handleSummarize}
-        >
-          <Text style={styles.aiButtonIcon}>✨</Text>
-          <Text style={[styles.aiButtonText, { color: COLORS.primary }]}>
-            Summarize with AI
-          </Text>
-        </TouchableOpacity>
+        {/* Action Buttons Row */}
+        <View style={styles.actionButtonsRow}>
+          {/* AI Summarize */}
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: COLORS.primary + '12' }]}
+            onPress={handleSummarize}
+          >
+            <Text style={styles.actionBtnIcon}>✨</Text>
+            <Text style={[styles.actionBtnText, { color: COLORS.primary }]}>
+              Summarize
+            </Text>
+          </TouchableOpacity>
+
+          {/* OCR */}
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: COLORS.warning + '20' }]}
+            onPress={handleOcr}
+          >
+            <Ionicons name="scan" size={ri(16)} color={COLORS.warning} />
+            <Text style={[styles.actionBtnText, { color: COLORS.warning }]}>
+              OCR
+            </Text>
+          </TouchableOpacity>
+
+          {/* Generate Flashcards */}
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: COLORS.accent + '15' }]}
+            onPress={() => setShowFlashcardGen(true)}
+          >
+            <Ionicons name="albums" size={ri(16)} color={COLORS.accent} />
+            <Text style={[styles.actionBtnText, { color: COLORS.accent }]}>
+              Flashcards
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Saved AI Summary */}
         {aiSummary && (
@@ -462,6 +608,34 @@ export default function NoteEditorScreen() {
             </View>
             <Text style={[styles.summaryText, { color: theme.text }]}>
               {aiSummary}
+            </Text>
+          </View>
+        )}
+
+        {/* Saved OCR Text */}
+        {ocrText && (
+          <View
+            style={[
+              styles.summaryCard,
+              { backgroundColor: COLORS.warning + '08', borderColor: COLORS.warning + '30' },
+            ]}
+          >
+            <View style={styles.summaryHeader}>
+              <Text style={[styles.summaryTitle, { color: COLORS.warning }]}>
+                🔍 Extracted Text (OCR)
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setOcrText(null);
+                  hasChanges.current = true;
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close-circle" size={ri(18)} color={theme.textTertiary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.summaryText, { color: theme.text }]}>
+              {ocrText}
             </Text>
           </View>
         )}
@@ -554,10 +728,7 @@ export default function NoteEditorScreen() {
                 <View style={styles.aiLoadingContainer}>
                   <ActivityIndicator size="large" color={COLORS.primary} />
                   <Text
-                    style={[
-                      styles.aiLoadingText,
-                      { color: theme.textSecondary },
-                    ]}
+                    style={[styles.aiLoadingText, { color: theme.textSecondary }]}
                   >
                     Generating summary...
                   </Text>
@@ -595,6 +766,104 @@ export default function NoteEditorScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* OCR Modal */}
+      <Modal visible={showOcrModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.modalContainer,
+              {
+                backgroundColor: theme.background,
+                paddingBottom: insets.bottom + rs(SPACING.lg),
+              },
+            ]}
+          >
+            <View style={[styles.modalHeader, { paddingHorizontal: horizontalPadding }]}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>
+                🔍 OCR Result
+              </Text>
+              <TouchableOpacity onPress={() => setShowOcrModal(false)}>
+                <Ionicons name="close" size={ri(24)} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={{ paddingHorizontal: horizontalPadding }}
+            >
+              {ocrLoading ? (
+                <View style={styles.aiLoadingContainer}>
+                  <ActivityIndicator size="large" color={COLORS.warning} />
+                  <Text style={[styles.aiLoadingText, { color: theme.textSecondary }]}>
+                    Extracting text...
+                  </Text>
+                </View>
+              ) : ocrResult ? (
+                <TextInput
+                  style={[
+                    styles.ocrTextArea,
+                    { backgroundColor: theme.surface, color: theme.text, borderColor: theme.border },
+                  ]}
+                  value={ocrResult}
+                  onChangeText={setOcrResult}
+                  multiline
+                  textAlignVertical="top"
+                />
+              ) : null}
+            </ScrollView>
+
+            {!ocrLoading && ocrResult && (
+              <View style={[styles.modalActions, { paddingHorizontal: horizontalPadding }]}>
+                <TouchableOpacity
+                  style={[styles.modalActionBtn, { backgroundColor: COLORS.warning }]}
+                  onPress={handleSaveOcrText}
+                >
+                  <Ionicons name="save-outline" size={ri(16)} color="#FFF" />
+                  <Text style={styles.modalActionText}>Save as Note Text</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modalActionBtn,
+                    { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border },
+                  ]}
+                  onPress={handleOcr}
+                >
+                  <Ionicons name="refresh" size={ri(16)} color={theme.text} />
+                  <Text style={[styles.modalActionText, { color: theme.text }]}>
+                    Re-scan
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Flashcard Generator Modal */}
+      <FlashcardGenerator
+        visible={showFlashcardGen}
+        noteTitle={title}
+        noteContent={textContent}
+        onClose={() => setShowFlashcardGen(false)}
+        onSave={handleSaveFlashcards}
+      />
+
+      {/* Print Options Modal */}
+      <PrintPreviewModal
+        visible={showPrintModal}
+        title="Print Note"
+        options={[
+          { key: 'includeDrawing', label: 'Include Drawing', value: printOptions.includeDrawing },
+          { key: 'includeSummary', label: 'Include AI Summary', value: printOptions.includeSummary },
+          { key: 'includeOcrText', label: 'Include OCR Text', value: printOptions.includeOcrText },
+        ]}
+        onToggleOption={(key) =>
+          setPrintOptions((prev) => ({ ...prev, [key]: !prev[key as keyof typeof prev] }))
+        }
+        onPrint={handlePrint}
+        onClose={() => setShowPrintModal(false)}
+      />
 
       {/* Task Form Modal */}
       <TaskForm
@@ -637,10 +906,10 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: rs(SPACING.sm),
+    gap: rs(SPACING.xs),
   },
   headerButton: {
-    padding: rs(SPACING.sm),
+    padding: rs(SPACING.xs),
   },
   colorIndicator: {
     width: ri(22),
@@ -751,20 +1020,27 @@ const styles = StyleSheet.create({
     lineHeight: rf(FONT_SIZES.bodyLarge) * 1.45,
     minHeight: rs(120),
   },
-  aiButton: {
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: rs(SPACING.sm),
+    marginBottom: rs(SPACING.lg),
+    flexWrap: 'wrap',
+  },
+  actionBtn: {
+    flex: 1,
+    minWidth: rs(90),
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: rr(RADIUS.md),
-    paddingVertical: rs(SPACING.md),
-    marginBottom: rs(SPACING.lg),
-    gap: rs(SPACING.sm),
+    paddingVertical: rs(SPACING.sm + 2),
+    gap: rs(SPACING.xs),
   },
-  aiButtonIcon: {
-    fontSize: rf(16),
+  actionBtnIcon: {
+    fontSize: rf(14),
   },
-  aiButtonText: {
-    fontSize: rf(FONT_SIZES.body),
+  actionBtnText: {
+    fontSize: rf(FONT_SIZES.small),
     fontWeight: '600',
   },
   summaryCard: {
@@ -855,6 +1131,14 @@ const styles = StyleSheet.create({
   modalSummaryText: {
     fontSize: rf(FONT_SIZES.bodyLarge),
     lineHeight: rf(FONT_SIZES.bodyLarge) * 1.6,
+  },
+  ocrTextArea: {
+    borderWidth: 1,
+    borderRadius: rr(RADIUS.md),
+    padding: rs(SPACING.md),
+    fontSize: rf(FONT_SIZES.body),
+    minHeight: rs(150),
+    lineHeight: rf(FONT_SIZES.body) * 1.5,
   },
   modalActions: {
     flexDirection: 'row',

@@ -107,6 +107,114 @@ export async function summarizeNote(
   }
 }
 
+// ─── AI Flashcard Generation ────────────────────────────────────
+
+export interface FlashcardGenResult {
+  cards: { front: string; back: string }[];
+  error?: never;
+}
+
+export interface FlashcardGenError {
+  cards?: never;
+  error: string;
+}
+
+export type FlashcardGenResponse = FlashcardGenResult | FlashcardGenError;
+
+export async function generateFlashcards(
+  noteTitle: string,
+  noteContent: string
+): Promise<FlashcardGenResponse> {
+  try {
+    const apiKey = await getApiKey();
+    if (!apiKey) {
+      return { error: 'No API key configured. Please add your OpenAI API key in Settings.' };
+    }
+
+    if (!noteTitle.trim() && !noteContent.trim()) {
+      return { error: 'No content to generate flashcards from. Add some content to your note first.' };
+    }
+
+    const noteInfo = `Title: ${noteTitle || 'Untitled Note'}${noteContent ? `\n\nContent:\n${noteContent}` : ''}`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a study assistant. Generate 5-10 flashcard Q&A pairs from the given note content. Focus on key concepts, definitions, and important facts. Return ONLY a valid JSON array with objects having "front" (question) and "back" (answer) keys. No markdown, no explanation, just the JSON array.',
+          },
+          {
+            role: 'user',
+            content: `Generate flashcards from this note:\n\n${noteInfo}`,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 1500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      if (response.status === 401) {
+        return { error: 'Invalid API key. Please check your OpenAI API key in Settings.' };
+      }
+      if (response.status === 429) {
+        return { error: 'Rate limit reached. Please wait a moment and try again.' };
+      }
+      return {
+        error: errorData?.error?.message || `API error (${response.status}). Please try again.`,
+      };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content?.trim();
+
+    if (!content) {
+      return { error: 'No flashcards were generated. Please try again.' };
+    }
+
+    // Parse JSON response - handle potential markdown wrapping
+    let cleaned = content;
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+
+    try {
+      const cards = JSON.parse(cleaned);
+      if (!Array.isArray(cards) || cards.length === 0) {
+        return { error: 'Invalid response format. Please try again.' };
+      }
+
+      const validCards = cards
+        .filter((c: any) => c.front && c.back)
+        .map((c: any) => ({ front: String(c.front).trim(), back: String(c.back).trim() }));
+
+      if (validCards.length === 0) {
+        return { error: 'No valid flashcards in response. Please try again.' };
+      }
+
+      return { cards: validCards };
+    } catch {
+      return { error: 'Failed to parse AI response. Please try again.' };
+    }
+  } catch (error: any) {
+    if (error?.message?.includes('Network')) {
+      return { error: 'Network error. Please check your internet connection.' };
+    }
+    return { error: 'An unexpected error occurred. Please try again.' };
+  }
+}
+
+// ─── Test API Connection ────────────────────────────────────────
+
 export async function testApiConnection(): Promise<{ success: boolean; error?: string }> {
   try {
     const apiKey = await getApiKey();

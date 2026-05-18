@@ -14,8 +14,12 @@ import NotesListScreen from '../screens/NotesListScreen';
 import NoteEditorScreen from '../screens/NoteEditorScreen';
 import SubjectsScreen from '../screens/SubjectsScreen';
 import TasksScreen from '../screens/TasksScreen';
+import HabitsScreen from '../screens/HabitsScreen';
 import FinanceScreen from '../screens/FinanceScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import FlashcardsScreen from '../screens/FlashcardsScreen';
+import FlashcardDeckScreen from '../screens/FlashcardDeckScreen';
+import FlashcardStudyScreen from '../screens/FlashcardStudyScreen';
 
 // ─── Notes Stack ────────────────────────────────────────────────
 
@@ -34,6 +38,21 @@ function NotesStackNavigator() {
         name="Subjects"
         component={SubjectsScreen}
         options={{ gestureEnabled: true }}
+      />
+      <NotesStack.Screen
+        name="Flashcards"
+        component={FlashcardsScreen}
+        options={{ gestureEnabled: true }}
+      />
+      <NotesStack.Screen
+        name="FlashcardDeck"
+        component={FlashcardDeckScreen}
+        options={{ gestureEnabled: true }}
+      />
+      <NotesStack.Screen
+        name="FlashcardStudy"
+        component={FlashcardStudyScreen}
+        options={{ gestureEnabled: false }}
       />
     </NotesStack.Navigator>
   );
@@ -70,6 +89,9 @@ function AppTabs() {
             case 'Tasks':
               iconName = focused ? 'checkbox' : 'checkbox-outline';
               break;
+            case 'Habits':
+              iconName = focused ? 'flame' : 'flame-outline';
+              break;
             case 'Finance':
               iconName = focused ? 'wallet' : 'wallet-outline';
               break;
@@ -94,13 +116,14 @@ function AppTabs() {
           height: tabBarHeight,
         },
         tabBarLabelStyle: {
-          fontSize: rf(11),
+          fontSize: rf(10),
           fontWeight: '500',
         },
       })}
     >
       <Tab.Screen name="Notes" component={NotesStackNavigator} />
       <Tab.Screen name="Tasks" component={TasksScreen} />
+      <Tab.Screen name="Habits" component={HabitsScreen} />
       <Tab.Screen name="Finance" component={FinanceScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>

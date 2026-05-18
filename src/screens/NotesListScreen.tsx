@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   FlatList,
   TouchableOpacity,
@@ -42,6 +43,7 @@ export default function NotesListScreen() {
   const { subjects, loadSubjects } = useSubjectsStore();
 
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useFocusEffect(
     useCallback(() => {
@@ -69,9 +71,21 @@ export default function NotesListScreen() {
     );
   };
 
-  const filteredNotes = selectedSubjectId
+  // Filter by subject
+  let filteredNotes = selectedSubjectId
     ? notes.filter((n) => n.subjectId === selectedSubjectId)
     : notes;
+
+  // Filter by search (title, textContent, ocrText)
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase();
+    filteredNotes = filteredNotes.filter(
+      (n) =>
+        n.title.toLowerCase().includes(q) ||
+        n.textContent.toLowerCase().includes(q) ||
+        (n.ocrText && n.ocrText.toLowerCase().includes(q))
+    );
+  }
 
   const sortedNotes = [...filteredNotes].sort((a, b) => {
     if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
@@ -111,7 +125,14 @@ export default function NotesListScreen() {
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity
-            style={[styles.subjectsButton, { borderColor: theme.border }]}
+            style={[styles.headerIconBtn, { borderColor: theme.border }]}
+            onPress={() => navigation.navigate('Flashcards')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="albums-outline" size={ri(18)} color={COLORS.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.headerIconBtn, { borderColor: theme.border }]}
             onPress={() => navigation.navigate('Subjects')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
@@ -124,6 +145,22 @@ export default function NotesListScreen() {
           >
             <Ionicons name="add" size={ri(24)} color="#FFF" />
           </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Search Bar */}
+      <View style={[styles.searchRow, { paddingHorizontal: horizontalPadding }]}>
+        <View style={[styles.searchBar, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Ionicons name="search" size={ri(16)} color={theme.textTertiary} />
+          <TextInput
+            style={[styles.searchInput, { color: theme.text }]}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search notes & OCR text..."
+            placeholderTextColor={theme.textTertiary}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
         </View>
       </View>
 
@@ -216,10 +253,16 @@ export default function NotesListScreen() {
         <View style={[styles.emptyState, { paddingBottom: insets.bottom + rs(100) }]}>
           <Text style={{ fontSize: rf(56), marginBottom: rs(16) }}>📝</Text>
           <Text style={[styles.emptyTitle, { color: theme.text }]}>
-            {selectedSubjectId ? 'No notes in this subject' : 'No notes yet'}
+            {searchQuery.trim()
+              ? 'No matching notes'
+              : selectedSubjectId
+              ? 'No notes in this subject'
+              : 'No notes yet'}
           </Text>
           <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
-            Tap the + button to create your first note
+            {searchQuery.trim()
+              ? 'Try a different search term'
+              : 'Tap the + button to create your first note'}
           </Text>
         </View>
       ) : (
@@ -295,10 +338,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: rs(SPACING.sm),
   },
-  subjectsButton: {
-    width: ri(40),
-    height: ri(40),
-    borderRadius: ri(40) / 2,
+  headerIconBtn: {
+    width: ri(38),
+    height: ri(38),
+    borderRadius: ri(38) / 2,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -314,6 +357,23 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
+  },
+  searchRow: {
+    marginBottom: rs(SPACING.sm),
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: rr(RADIUS.md),
+    paddingHorizontal: rs(SPACING.md),
+    paddingVertical: rs(SPACING.sm),
+    gap: rs(SPACING.sm),
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: rf(FONT_SIZES.body),
+    padding: 0,
   },
   filterTabs: {
     gap: rs(SPACING.sm),

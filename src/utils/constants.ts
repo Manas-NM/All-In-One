@@ -121,6 +121,45 @@ export const PRIORITY_CONFIG = {
   low: { label: 'Low', color: '#00B894', icon: 'flag' },
 } as const;
 
+// ─── Habit Constants ─────────────────────────────────────────────
+
+export const HABIT_COLORS = [
+  '#6C5CE7', // purple
+  '#E17055', // red
+  '#00B894', // green
+  '#74B9FF', // blue
+  '#FD79A8', // pink
+  '#FDCB6E', // yellow
+  '#00CEC9', // teal
+  '#A29BFE', // lavender
+] as const;
+
+export const HABIT_ICONS = [
+  { name: 'fitness', label: 'Fitness' },
+  { name: 'book', label: 'Study' },
+  { name: 'water', label: 'Water' },
+  { name: 'leaf', label: 'Meditation' },
+  { name: 'musical-notes', label: 'Music' },
+  { name: 'code-slash', label: 'Coding' },
+  { name: 'walk', label: 'Walking' },
+  { name: 'bed', label: 'Sleep' },
+  { name: 'nutrition', label: 'Nutrition' },
+  { name: 'pencil', label: 'Writing' },
+  { name: 'language', label: 'Language' },
+  { name: 'happy', label: 'Mindfulness' },
+] as const;
+
+// ─── Flashcard Constants ─────────────────────────────────────────
+
+export const QUALITY_LABELS = [
+  { value: 0, label: 'Again', color: '#E17055' },
+  { value: 1, label: 'Hard', color: '#FD79A8' },
+  { value: 2, label: 'Hard', color: '#FDCB6E' },
+  { value: 3, label: 'Good', color: '#74B9FF' },
+  { value: 4, label: 'Easy', color: '#00B894' },
+  { value: 5, label: 'Easy', color: '#00CEC9' },
+] as const;
+
 // ─── Database ───────────────────────────────────────────────────
 
 export const DB_NAME = 'studentos.db';
