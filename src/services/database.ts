@@ -16,6 +16,11 @@ import {
   FlashcardDeck,
   Flashcard,
   FlashcardReview,
+  LibraryFolder,
+  Notebook,
+  NotebookPage,
+  CanvasObject,
+  CanvasTemplate,
 } from '../types';
 import { CATEGORY_CONFIG } from '../utils/constants';
 
@@ -83,6 +88,8 @@ async function runMigrations(): Promise<void> {
       priority TEXT NOT NULL DEFAULT 'medium',
       completed INTEGER NOT NULL DEFAULT 0,
       noteId TEXT,
+      notebookId TEXT,
+      pageId TEXT,
       subjectId TEXT,
       createdAt INTEGER NOT NULL
     );
@@ -121,6 +128,8 @@ async function runMigrations(): Promise<void> {
       description TEXT NOT NULL DEFAULT '',
       subjectId TEXT,
       noteId TEXT,
+      notebookId TEXT,
+      pageId TEXT,
       createdAt INTEGER NOT NULL
     );
   `);
@@ -157,6 +166,73 @@ async function runMigrations(): Promise<void> {
   try { await database.execAsync(`ALTER TABLE notes ADD COLUMN subject_id TEXT;`); } catch { /* exists */ }
   try { await database.execAsync(`ALTER TABLE notes ADD COLUMN ai_summary TEXT;`); } catch { /* exists */ }
   try { await database.execAsync(`ALTER TABLE notes ADD COLUMN ocr_text TEXT;`); } catch { /* exists */ }
+
+  // ── Task/Deck migration columns for page-linked model ────────
+  try { await database.execAsync(`ALTER TABLE tasks ADD COLUMN notebookId TEXT;`); } catch { /* exists */ }
+  try { await database.execAsync(`ALTER TABLE tasks ADD COLUMN pageId TEXT;`); } catch { /* exists */ }
+  try { await database.execAsync(`ALTER TABLE flashcard_decks ADD COLUMN notebookId TEXT;`); } catch { /* exists */ }
+  try { await database.execAsync(`ALTER TABLE flashcard_decks ADD COLUMN pageId TEXT;`); } catch { /* exists */ }
+
+  // ── GoodNotes-style schema v4 ───────────────────────────────
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS folders (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#6C5CE7',
+      icon TEXT NOT NULL DEFAULT 'folder',
+      parentId TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY (parentId) REFERENCES folders(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notebooks (
+      id TEXT PRIMARY KEY NOT NULL,
+      title TEXT NOT NULL,
+      folderId TEXT,
+      coverColor TEXT NOT NULL DEFAULT '#6C5CE7',
+      coverIcon TEXT NOT NULL DEFAULT 'book',
+      template TEXT NOT NULL DEFAULT 'lined',
+      isFavorite INTEGER NOT NULL DEFAULT 0,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY (folderId) REFERENCES folders(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pages (
+      id TEXT PRIMARY KEY NOT NULL,
+      notebookId TEXT NOT NULL,
+      pageNumber INTEGER NOT NULL,
+      template TEXT NOT NULL DEFAULT 'lined',
+      title TEXT NOT NULL DEFAULT '',
+      thumbnailUri TEXT,
+      ocrText TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      UNIQUE(notebookId, pageNumber),
+      FOREIGN KEY (notebookId) REFERENCES notebooks(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS canvas_objects (
+      id TEXT PRIMARY KEY NOT NULL,
+      pageId TEXT NOT NULL,
+      type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      zIndex INTEGER NOT NULL DEFAULT 0,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY (pageId) REFERENCES pages(id) ON DELETE CASCADE
+    );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS page_search USING fts5(
+      notebookId UNINDEXED,
+      pageId UNINDEXED,
+      content
+    );
+  `);
+
+  // ── Migrate legacy notes -> notebooks/pages once ─────────────
+  await migrateLegacyNotesToNotebookModel();
 
   // ── Seed default subjects on first launch ───────────────────
   const subjectCount = await database.getFirstAsync<{ cnt: number }>(
@@ -391,6 +467,8 @@ function mapTaskRow(row: any): Task {
     completed: Boolean(row.completed),
     dueDate: row.dueDate ?? null,
     noteId: row.noteId ?? null,
+    notebookId: row.notebookId ?? null,
+    pageId: row.pageId ?? null,
     subjectId: row.subjectId ?? null,
   };
 }
@@ -403,9 +481,21 @@ export async function createTask(
   const createdAt = Date.now();
 
   await database.runAsync(
-    `INSERT INTO tasks (id, title, description, dueDate, priority, completed, noteId, subjectId, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, task.title, task.description, task.dueDate ?? null, task.priority, task.completed ? 1 : 0, task.noteId ?? null, task.subjectId ?? null, createdAt]
+    `INSERT INTO tasks (id, title, description, dueDate, priority, completed, noteId, notebookId, pageId, subjectId, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      task.title,
+      task.description,
+      task.dueDate ?? null,
+      task.priority,
+      task.completed ? 1 : 0,
+      task.noteId ?? null,
+      task.notebookId ?? null,
+      task.pageId ?? null,
+      task.subjectId ?? null,
+      createdAt,
+    ]
   );
 
   return { id, ...task, createdAt };
@@ -425,6 +515,8 @@ export async function updateTask(
   if (updates.priority !== undefined) { fields.push('priority = ?'); values.push(updates.priority); }
   if (updates.completed !== undefined) { fields.push('completed = ?'); values.push(updates.completed ? 1 : 0); }
   if (updates.noteId !== undefined) { fields.push('noteId = ?'); values.push(updates.noteId); }
+  if (updates.notebookId !== undefined) { fields.push('notebookId = ?'); values.push(updates.notebookId); }
+  if (updates.pageId !== undefined) { fields.push('pageId = ?'); values.push(updates.pageId); }
   if (updates.subjectId !== undefined) { fields.push('subjectId = ?'); values.push(updates.subjectId); }
 
   if (fields.length === 0) return;
@@ -566,8 +658,17 @@ export async function createDeck(
   const createdAt = Date.now();
 
   await database.runAsync(
-    `INSERT INTO flashcard_decks (id, name, description, subjectId, noteId, createdAt) VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, deck.name, deck.description, deck.subjectId ?? null, deck.noteId ?? null, createdAt]
+    `INSERT INTO flashcard_decks (id, name, description, subjectId, noteId, notebookId, pageId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      deck.name,
+      deck.description,
+      deck.subjectId ?? null,
+      deck.noteId ?? null,
+      deck.notebookId ?? null,
+      deck.pageId ?? null,
+      createdAt,
+    ]
   );
 
   return { id, ...deck, createdAt };
@@ -585,6 +686,8 @@ export async function updateDeck(
   if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
   if (updates.subjectId !== undefined) { fields.push('subjectId = ?'); values.push(updates.subjectId); }
   if (updates.noteId !== undefined) { fields.push('noteId = ?'); values.push(updates.noteId); }
+  if (updates.notebookId !== undefined) { fields.push('notebookId = ?'); values.push(updates.notebookId); }
+  if (updates.pageId !== undefined) { fields.push('pageId = ?'); values.push(updates.pageId); }
 
   if (fields.length === 0) return;
 
@@ -693,6 +796,389 @@ export async function createReview(
   );
 
   return { id, ...review };
+}
+
+async function migrateLegacyNotesToNotebookModel(): Promise<void> {
+  const database = getDb();
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS legacy_note_mapping (
+      noteId TEXT PRIMARY KEY NOT NULL,
+      notebookId TEXT NOT NULL,
+      pageId TEXT NOT NULL
+    );
+  `);
+
+  const existing = await database.getFirstAsync<{ cnt: number }>('SELECT COUNT(*) as cnt FROM legacy_note_mapping');
+  if ((existing?.cnt ?? 0) > 0) {
+    return;
+  }
+
+  const notes = await database.getAllAsync<any>('SELECT * FROM notes ORDER BY createdAt ASC');
+  for (const legacy of notes) {
+    const notebookId = generateId();
+    const pageId = generateId();
+    const now = Date.now();
+
+    await database.runAsync(
+      `INSERT INTO notebooks (id, title, folderId, coverColor, coverIcon, template, isFavorite, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        notebookId,
+        legacy.title || 'Untitled',
+        legacy.subject_id ?? null,
+        legacy.color || '#6C5CE7',
+        'book',
+        'lined',
+        legacy.isFavorite ? 1 : 0,
+        now,
+        now,
+      ]
+    );
+
+    await database.runAsync(
+      `INSERT INTO pages (id, notebookId, pageNumber, template, title, thumbnailUri, ocrText, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        pageId,
+        notebookId,
+        1,
+        'lined',
+        legacy.title || 'Page 1',
+        null,
+        legacy.ocr_text ?? null,
+        now,
+        now,
+      ]
+    );
+
+    await database.runAsync(
+      'INSERT INTO legacy_note_mapping (noteId, notebookId, pageId) VALUES (?, ?, ?)',
+      [legacy.id, notebookId, pageId]
+    );
+
+    if (legacy.textContent) {
+      await database.runAsync(
+        'INSERT INTO page_search (notebookId, pageId, content) VALUES (?, ?, ?)',
+        [notebookId, pageId, legacy.textContent]
+      );
+    }
+  }
+}
+
+function mapFolderRow(row: any): LibraryFolder {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    icon: row.icon,
+    parentId: row.parentId ?? null,
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  };
+}
+
+function mapNotebookRow(row: any): Notebook {
+  return {
+    id: row.id,
+    title: row.title,
+    folderId: row.folderId ?? null,
+    coverColor: row.coverColor,
+    coverIcon: row.coverIcon,
+    template: row.template as CanvasTemplate,
+    isFavorite: Boolean(row.isFavorite),
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  };
+}
+
+function mapPageRow(row: any): NotebookPage {
+  return {
+    id: row.id,
+    notebookId: row.notebookId,
+    pageNumber: Number(row.pageNumber),
+    template: row.template as CanvasTemplate,
+    title: row.title,
+    thumbnailUri: row.thumbnailUri ?? null,
+    ocrText: row.ocrText ?? null,
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  };
+}
+
+function mapCanvasObjectRow(row: any): CanvasObject {
+  return {
+    id: row.id,
+    pageId: row.pageId,
+    type: row.type,
+    payload: row.payload,
+    zIndex: Number(row.zIndex),
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  };
+}
+
+// ─── Folder CRUD ────────────────────────────────────────────────
+
+export async function getAllFolders(): Promise<LibraryFolder[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<any>('SELECT * FROM folders ORDER BY updatedAt DESC, createdAt DESC');
+  return rows.map(mapFolderRow);
+}
+
+export async function createFolder(input: Omit<LibraryFolder, 'id' | 'createdAt' | 'updatedAt'>): Promise<LibraryFolder> {
+  const database = getDb();
+  const now = Date.now();
+  const folder: LibraryFolder = {
+    id: generateId(),
+    name: input.name,
+    color: input.color,
+    icon: input.icon,
+    parentId: input.parentId ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await database.runAsync(
+    `INSERT INTO folders (id, name, color, icon, parentId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [folder.id, folder.name, folder.color, folder.icon, folder.parentId, folder.createdAt, folder.updatedAt]
+  );
+
+  return folder;
+}
+
+export async function updateFolder(id: string, updates: Partial<Omit<LibraryFolder, 'id' | 'createdAt'>>): Promise<void> {
+  const database = getDb();
+  const fields: string[] = ['updatedAt = ?'];
+  const values: any[] = [Date.now()];
+
+  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name); }
+  if (updates.color !== undefined) { fields.push('color = ?'); values.push(updates.color); }
+  if (updates.icon !== undefined) { fields.push('icon = ?'); values.push(updates.icon); }
+  if (updates.parentId !== undefined) { fields.push('parentId = ?'); values.push(updates.parentId); }
+
+  values.push(id);
+  await database.runAsync(`UPDATE folders SET ${fields.join(', ')} WHERE id = ?`, values);
+}
+
+export async function deleteFolder(id: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync('UPDATE notebooks SET folderId = NULL WHERE folderId = ?', [id]);
+  await database.runAsync('DELETE FROM folders WHERE id = ?', [id]);
+}
+
+// ─── Notebook CRUD ──────────────────────────────────────────────
+
+export async function getAllNotebooks(): Promise<Notebook[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<any>('SELECT * FROM notebooks ORDER BY updatedAt DESC');
+  return rows.map(mapNotebookRow);
+}
+
+export async function getNotebookById(id: string): Promise<Notebook | null> {
+  const database = getDb();
+  const row = await database.getFirstAsync<any>('SELECT * FROM notebooks WHERE id = ?', [id]);
+  return row ? mapNotebookRow(row) : null;
+}
+
+export async function createNotebook(input: Omit<Notebook, 'id' | 'createdAt' | 'updatedAt'>): Promise<Notebook> {
+  const database = getDb();
+  const now = Date.now();
+  const notebook: Notebook = {
+    id: generateId(),
+    title: input.title,
+    folderId: input.folderId ?? null,
+    coverColor: input.coverColor,
+    coverIcon: input.coverIcon,
+    template: input.template,
+    isFavorite: input.isFavorite,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await database.runAsync(
+    `INSERT INTO notebooks (id, title, folderId, coverColor, coverIcon, template, isFavorite, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      notebook.id,
+      notebook.title,
+      notebook.folderId,
+      notebook.coverColor,
+      notebook.coverIcon,
+      notebook.template,
+      notebook.isFavorite ? 1 : 0,
+      notebook.createdAt,
+      notebook.updatedAt,
+    ]
+  );
+
+  // start with one page
+  await createPage(notebook.id, {
+    title: 'Page 1',
+    template: notebook.template,
+  });
+
+  return notebook;
+}
+
+export async function updateNotebook(id: string, updates: Partial<Omit<Notebook, 'id' | 'createdAt'>>): Promise<void> {
+  const database = getDb();
+  const fields: string[] = ['updatedAt = ?'];
+  const values: any[] = [Date.now()];
+
+  if (updates.title !== undefined) { fields.push('title = ?'); values.push(updates.title); }
+  if (updates.folderId !== undefined) { fields.push('folderId = ?'); values.push(updates.folderId); }
+  if (updates.coverColor !== undefined) { fields.push('coverColor = ?'); values.push(updates.coverColor); }
+  if (updates.coverIcon !== undefined) { fields.push('coverIcon = ?'); values.push(updates.coverIcon); }
+  if (updates.template !== undefined) { fields.push('template = ?'); values.push(updates.template); }
+  if (updates.isFavorite !== undefined) { fields.push('isFavorite = ?'); values.push(updates.isFavorite ? 1 : 0); }
+
+  values.push(id);
+  await database.runAsync(`UPDATE notebooks SET ${fields.join(', ')} WHERE id = ?`, values);
+}
+
+export async function deleteNotebook(id: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync('DELETE FROM notebooks WHERE id = ?', [id]);
+}
+
+// ─── Page CRUD ──────────────────────────────────────────────────
+
+export async function getPagesByNotebook(notebookId: string): Promise<NotebookPage[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<any>('SELECT * FROM pages WHERE notebookId = ? ORDER BY pageNumber ASC', [notebookId]);
+  return rows.map(mapPageRow);
+}
+
+export async function getPageById(pageId: string): Promise<NotebookPage | null> {
+  const database = getDb();
+  const row = await database.getFirstAsync<any>('SELECT * FROM pages WHERE id = ?', [pageId]);
+  return row ? mapPageRow(row) : null;
+}
+
+export async function createPage(
+  notebookId: string,
+  input: { title?: string; template?: CanvasTemplate; insertAt?: number }
+): Promise<NotebookPage> {
+  const database = getDb();
+  const now = Date.now();
+  const max = await database.getFirstAsync<{ maxPage: number }>('SELECT MAX(pageNumber) as maxPage FROM pages WHERE notebookId = ?', [notebookId]);
+  const nextPage = input.insertAt ?? ((max?.maxPage ?? 0) + 1);
+
+  if (input.insertAt !== undefined) {
+    await database.runAsync('UPDATE pages SET pageNumber = pageNumber + 1 WHERE notebookId = ? AND pageNumber >= ?', [notebookId, input.insertAt]);
+  }
+
+  const page: NotebookPage = {
+    id: generateId(),
+    notebookId,
+    pageNumber: nextPage,
+    template: input.template ?? 'lined',
+    title: input.title ?? `Page ${nextPage}`,
+    thumbnailUri: null,
+    ocrText: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await database.runAsync(
+    `INSERT INTO pages (id, notebookId, pageNumber, template, title, thumbnailUri, ocrText, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [page.id, page.notebookId, page.pageNumber, page.template, page.title, page.thumbnailUri, page.ocrText, page.createdAt, page.updatedAt]
+  );
+
+  await database.runAsync('UPDATE notebooks SET updatedAt = ? WHERE id = ?', [now, notebookId]);
+  return page;
+}
+
+export async function updatePage(pageId: string, updates: Partial<Omit<NotebookPage, 'id' | 'notebookId' | 'createdAt'>>): Promise<void> {
+  const database = getDb();
+  const fields: string[] = ['updatedAt = ?'];
+  const values: any[] = [Date.now()];
+
+  if (updates.pageNumber !== undefined) { fields.push('pageNumber = ?'); values.push(updates.pageNumber); }
+  if (updates.template !== undefined) { fields.push('template = ?'); values.push(updates.template); }
+  if (updates.title !== undefined) { fields.push('title = ?'); values.push(updates.title); }
+  if (updates.thumbnailUri !== undefined) { fields.push('thumbnailUri = ?'); values.push(updates.thumbnailUri); }
+  if (updates.ocrText !== undefined) { fields.push('ocrText = ?'); values.push(updates.ocrText); }
+
+  values.push(pageId);
+  await database.runAsync(`UPDATE pages SET ${fields.join(', ')} WHERE id = ?`, values);
+}
+
+export async function deletePage(pageId: string): Promise<void> {
+  const database = getDb();
+  const page = await getPageById(pageId);
+  if (!page) return;
+
+  const total = await database.getFirstAsync<{ cnt: number }>('SELECT COUNT(*) as cnt FROM pages WHERE notebookId = ?', [page.notebookId]);
+  if ((total?.cnt ?? 0) <= 1) return;
+
+  await database.runAsync('DELETE FROM pages WHERE id = ?', [pageId]);
+  await database.runAsync('UPDATE pages SET pageNumber = pageNumber - 1 WHERE notebookId = ? AND pageNumber > ?', [page.notebookId, page.pageNumber]);
+}
+
+export async function reorderPages(notebookId: string, pageIdsInOrder: string[]): Promise<void> {
+  const database = getDb();
+  for (let i = 0; i < pageIdsInOrder.length; i += 1) {
+    await database.runAsync('UPDATE pages SET pageNumber = ?, updatedAt = ? WHERE id = ? AND notebookId = ?', [i + 1, Date.now(), pageIdsInOrder[i], notebookId]);
+  }
+}
+
+// ─── Canvas Objects / Search ─────────────────────────────────────
+
+export async function getCanvasObjects(pageId: string): Promise<CanvasObject[]> {
+  const database = getDb();
+  const rows = await database.getAllAsync<any>('SELECT * FROM canvas_objects WHERE pageId = ? ORDER BY zIndex ASC', [pageId]);
+  return rows.map(mapCanvasObjectRow);
+}
+
+export async function upsertCanvasObject(input: Omit<CanvasObject, 'createdAt' | 'updatedAt'>): Promise<CanvasObject> {
+  const database = getDb();
+  const now = Date.now();
+  const existing = await database.getFirstAsync<{ id: string }>('SELECT id FROM canvas_objects WHERE id = ?', [input.id]);
+
+  if (existing) {
+    await database.runAsync(
+      `UPDATE canvas_objects SET pageId = ?, type = ?, payload = ?, zIndex = ?, updatedAt = ? WHERE id = ?`,
+      [input.pageId, input.type, input.payload, input.zIndex, now, input.id]
+    );
+    return { ...input, createdAt: now, updatedAt: now };
+  }
+
+  await database.runAsync(
+    `INSERT INTO canvas_objects (id, pageId, type, payload, zIndex, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [input.id, input.pageId, input.type, input.payload, input.zIndex, now, now]
+  );
+
+  return { ...input, createdAt: now, updatedAt: now };
+}
+
+export async function replacePageSearchIndex(notebookId: string, pageId: string, content: string): Promise<void> {
+  const database = getDb();
+  await database.runAsync('DELETE FROM page_search WHERE pageId = ?', [pageId]);
+  if (content.trim()) {
+    await database.runAsync('INSERT INTO page_search (notebookId, pageId, content) VALUES (?, ?, ?)', [notebookId, pageId, content]);
+  }
+}
+
+export async function searchPages(query: string): Promise<Array<{ notebookId: string; pageId: string; content: string }>> {
+  const database = getDb();
+  if (!query.trim()) return [];
+  return database.getAllAsync<{ notebookId: string; pageId: string; content: string }>(
+    'SELECT notebookId, pageId, content FROM page_search WHERE page_search MATCH ? LIMIT 100',
+    [query.trim()]
+  );
+}
+
+export async function resolveLegacyNoteToPage(noteId: string): Promise<{ notebookId: string; pageId: string } | null> {
+  const database = getDb();
+  const row = await database.getFirstAsync<{ notebookId: string; pageId: string }>(
+    'SELECT notebookId, pageId FROM legacy_note_mapping WHERE noteId = ?',
+    [noteId]
+  );
+  return row ?? null;
 }
 
 // ─── Expenses CRUD ──────────────────────────────────────────────

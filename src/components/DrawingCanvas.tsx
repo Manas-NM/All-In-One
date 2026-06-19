@@ -1,404 +1,234 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
+import { View, StyleSheet, useColorScheme } from 'react-native';
 import {
-  View,
-  StyleSheet,
-  PanResponder,
-  TouchableOpacity,
-  useColorScheme,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Stroke, StrokePoint, DrawingTool, CanvasState } from '../types';
+  Canvas,
+  Path,
+  Skia,
+  Line,
+  Circle,
+  Rect,
+  Group,
+} from '@shopify/react-native-skia';
 import {
-  COLORS,
-  PEN_COLORS,
-  PEN_COLORS_DARK,
-  HIGHLIGHTER_COLOR,
-  TOOL_SIZES,
-  SPACING,
-  RADIUS,
-} from '../utils/constants';
-import {
-  rs,
-  rr,
-  ri,
-  getCanvasDimensions,
-} from '../utils/responsive';
+  Gesture,
+  GestureDetector,
+} from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
+import { Stroke, StrokePoint, CanvasTemplate, DrawingTool } from '../types';
+import { COLORS } from '../utils/constants';
 
 interface DrawingCanvasProps {
   initialStrokes?: Stroke[];
   onStrokesChange?: (strokes: Stroke[]) => void;
   canvasHeight?: number;
+  canvasWidth?: number;
+  template?: CanvasTemplate;
+  activeTool?: DrawingTool;
+  penColor?: string;
+  penSize?: number;
+  highlighterColor?: string;
+  highlighterSize?: number;
+  zoomScale?: number;
+}
+
+function strokeToSkiaPath(points: StrokePoint[]) {
+  const path = Skia.Path.Make();
+  if (!points.length) return path;
+  path.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i += 1) {
+    path.lineTo(points[i].x, points[i].y);
+  }
+  return path;
 }
 
 export default function DrawingCanvas({
   initialStrokes = [],
   onStrokesChange,
-  canvasHeight,
+  canvasHeight = 560,
+  canvasWidth = 1000,
+  template = 'lined',
+  activeTool = 'pen',
+  penColor = '#2D3436',
+  penSize = 2,
+  highlighterColor = '#FFE066',
+  highlighterSize = 12,
+  zoomScale = 1,
 }: DrawingCanvasProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
-  const penColors = isDark ? PEN_COLORS_DARK : PEN_COLORS;
 
-  // If no explicit height is provided, derive a responsive one from the
-  // device class. This keeps the drawing surface comfortable on every
-  // form factor (iPhone SE → iPad).
-  const responsiveHeight = canvasHeight ?? getCanvasDimensions().height;
+  const [strokes, setStrokes] = useState<Stroke[]>(initialStrokes);
+  const [draftPoints, setDraftPoints] = useState<StrokePoint[]>([]);
 
-  const [canvasState, setCanvasState] = useState<CanvasState>({
-    strokes: initialStrokes,
-    undoneStrokes: [],
-  });
-  const [activeTool, setActiveTool] = useState<DrawingTool>('pen');
-  const [activeColorIndex, setActiveColorIndex] = useState(0);
-  const currentStrokeRef = useRef<StrokePoint[]>([]);
-  const canvasRef = useRef<View>(null);
+  const applyStrokes = (next: Stroke[]) => {
+    setStrokes(next);
+    onStrokesChange?.(next);
+  };
 
-  useEffect(() => {
-    onStrokesChange?.(canvasState.strokes);
-  }, [canvasState.strokes]);
+  const beginStroke = (x: number, y: number) => {
+    setDraftPoints([{ x, y, p: 1, t: Date.now() }]);
+  };
 
-  const getStrokeStyle = useCallback(() => {
-    switch (activeTool) {
-      case 'pen':
-        return {
-          color: penColors[activeColorIndex] as string,
-          width: TOOL_SIZES.pen,
-          opacity: 1,
-        };
-      case 'highlighter':
-        return {
-          color: HIGHLIGHTER_COLOR,
-          width: TOOL_SIZES.highlighter,
-          opacity: 0.4,
-        };
-      case 'eraser':
-        return {
-          color: isDark ? COLORS.dark.surface : '#FFFFFF',
-          width: TOOL_SIZES.eraser,
-          opacity: 1,
-        };
+  const addPoint = (x: number, y: number, pressure?: number) => {
+    setDraftPoints((prev) => [...prev, { x, y, p: pressure ?? 1, t: Date.now() }]);
+  };
+
+  const finishStroke = () => {
+    if (draftPoints.length < 2) {
+      setDraftPoints([]);
+      return;
     }
-  }, [activeTool, activeColorIndex, isDark, penColors]);
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => {
-        const { locationX, locationY } = evt.nativeEvent;
-        currentStrokeRef.current = [{ x: locationX, y: locationY }];
-      },
-      onPanResponderMove: (evt) => {
-        const { locationX, locationY } = evt.nativeEvent;
-        currentStrokeRef.current.push({ x: locationX, y: locationY });
-        // Force re-render for live drawing feedback
-        setCanvasState((prev) => ({ ...prev }));
-      },
-      onPanResponderRelease: () => {
-        if (currentStrokeRef.current.length > 1) {
-          const style = getStrokeStyle();
-          const newStroke: Stroke = {
-            id:
-              Date.now().toString(36) +
-              Math.random().toString(36).substring(2, 6),
-            tool: activeTool,
-            color: style.color,
-            width: style.width,
-            opacity: style.opacity,
-            points: [...currentStrokeRef.current],
-          };
-          setCanvasState((prev) => ({
-            strokes: [...prev.strokes, newStroke],
-            undoneStrokes: [],
-          }));
-        }
-        currentStrokeRef.current = [];
-      },
+    if (activeTool === 'eraser') {
+      const [last] = draftPoints.slice(-1);
+      if (!last) return;
+      const next = strokes.filter((stroke) => {
+        return !stroke.points.some((p) => Math.hypot(p.x - last.x, p.y - last.y) < 16);
+      });
+      applyStrokes(next);
+      setDraftPoints([]);
+      return;
+    }
+
+    const isHighlight = activeTool === 'highlighter';
+    const stroke: Stroke = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tool: isHighlight ? 'highlighter' : 'pen',
+      color: isHighlight ? highlighterColor : penColor,
+      width: isHighlight ? highlighterSize : penSize,
+      opacity: isHighlight ? 0.33 : 1,
+      points: [...draftPoints],
+      baseWidth: isHighlight ? highlighterSize : penSize,
+      penType: 'ballpoint',
+    };
+
+    applyStrokes([...strokes, stroke]);
+    setDraftPoints([]);
+  };
+
+  const drawGesture = Gesture.Pan()
+    .minDistance(0)
+    .onBegin((e) => {
+      runOnJS(beginStroke)(e.x / zoomScale, e.y / zoomScale);
     })
-  ).current;
-
-  const handleUndo = () => {
-    setCanvasState((prev) => {
-      if (prev.strokes.length === 0) return prev;
-      const last = prev.strokes[prev.strokes.length - 1];
-      return {
-        strokes: prev.strokes.slice(0, -1),
-        undoneStrokes: [...prev.undoneStrokes, last],
-      };
+    .onUpdate((e) => {
+      const pressure = (e as any).stylusData?.pressure;
+      runOnJS(addPoint)(e.x / zoomScale, e.y / zoomScale, pressure);
+    })
+    .onEnd(() => {
+      runOnJS(finishStroke)();
     });
+
+  const renderedStrokes = useMemo(() => {
+    return strokes.map((stroke) => ({
+      id: stroke.id,
+      path: strokeToSkiaPath(stroke.points),
+      color: stroke.color,
+      width: stroke.width,
+      opacity: stroke.opacity,
+    }));
+  }, [strokes]);
+
+  const draftPath = useMemo(() => strokeToSkiaPath(draftPoints), [draftPoints]);
+
+  const renderTemplate = () => {
+    switch (template) {
+      case 'lined': {
+        const lines = [];
+        for (let y = 44; y < canvasHeight; y += 32) {
+          lines.push(
+            <Line
+              key={`line-${y}`}
+              p1={{ x: 0, y }}
+              p2={{ x: canvasWidth, y }}
+              color={isDark ? '#2a2f3e' : '#E9ECF4'}
+              strokeWidth={1}
+            />
+          );
+        }
+        return lines;
+      }
+      case 'grid': {
+        const grid = [];
+        for (let x = 0; x < canvasWidth; x += 32) {
+          grid.push(
+            <Line key={`vx-${x}`} p1={{ x, y: 0 }} p2={{ x, y: canvasHeight }} color={isDark ? '#242936' : '#EEF1F7'} strokeWidth={1} />
+          );
+        }
+        for (let y = 0; y < canvasHeight; y += 32) {
+          grid.push(
+            <Line key={`hy-${y}`} p1={{ x: 0, y }} p2={{ x: canvasWidth, y }} color={isDark ? '#242936' : '#EEF1F7'} strokeWidth={1} />
+          );
+        }
+        return grid;
+      }
+      case 'dotted': {
+        const dots = [];
+        for (let x = 20; x < canvasWidth; x += 28) {
+          for (let y = 20; y < canvasHeight; y += 28) {
+            dots.push(<Circle key={`dot-${x}-${y}`} cx={x} cy={y} r={1.2} color={isDark ? '#2d3343' : '#D8DDEB'} />);
+          }
+        }
+        return dots;
+      }
+      case 'cornell': {
+        return (
+          <>
+            <Line p1={{ x: canvasWidth * 0.22, y: 0 }} p2={{ x: canvasWidth * 0.22, y: canvasHeight }} color={isDark ? '#32405d' : '#B7C7E8'} strokeWidth={2} />
+            <Line p1={{ x: 0, y: canvasHeight * 0.82 }} p2={{ x: canvasWidth, y: canvasHeight * 0.82 }} color={isDark ? '#32405d' : '#B7C7E8'} strokeWidth={2} />
+          </>
+        );
+      }
+      case 'blank':
+      default:
+        return null;
+    }
   };
-
-  const handleRedo = () => {
-    setCanvasState((prev) => {
-      if (prev.undoneStrokes.length === 0) return prev;
-      const last = prev.undoneStrokes[prev.undoneStrokes.length - 1];
-      return {
-        strokes: [...prev.strokes, last],
-        undoneStrokes: prev.undoneStrokes.slice(0, -1),
-      };
-    });
-  };
-
-  const handleClear = () => {
-    setCanvasState({ strokes: [], undoneStrokes: [] });
-  };
-
-  // Render strokes as SVG-style paths using Views
-  const renderStroke = (stroke: Stroke, index: number) => {
-    if (stroke.points.length < 2) return null;
-    return stroke.points.map((point, i) => {
-      if (i === 0) return null;
-      const prev = stroke.points[i - 1];
-      const dx = point.x - prev.x;
-      const dy = point.y - prev.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-
-      return (
-        <View
-          key={`${index}-${i}`}
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: prev.x - stroke.width / 2,
-            top: prev.y - stroke.width / 2,
-            width: Math.max(dist, stroke.width),
-            height: stroke.width,
-            backgroundColor: stroke.color,
-            opacity: stroke.opacity,
-            borderRadius: stroke.width / 2,
-            transform: [{ rotate: `${angle}deg` }],
-            transformOrigin: `${stroke.width / 2}px ${stroke.width / 2}px`,
-          }}
-        />
-      );
-    });
-  };
-
-  const renderCurrentStroke = () => {
-    const pts = currentStrokeRef.current;
-    if (pts.length < 2) return null;
-    const style = getStrokeStyle();
-
-    return pts.map((point, i) => {
-      if (i === 0) return null;
-      const prev = pts[i - 1];
-      const dx = point.x - prev.x;
-      const dy = point.y - prev.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-
-      return (
-        <View
-          key={`current-${i}`}
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: prev.x - style.width / 2,
-            top: prev.y - style.width / 2,
-            width: Math.max(dist, style.width),
-            height: style.width,
-            backgroundColor: style.color,
-            opacity: style.opacity,
-            borderRadius: style.width / 2,
-            transform: [{ rotate: `${angle}deg` }],
-            transformOrigin: `${style.width / 2}px ${style.width / 2}px`,
-          }}
-        />
-      );
-    });
-  };
-
-  // Grid spacing scales lightly with canvas height so the lines feel
-  // consistent at different sizes.
-  const gridSpacing = Math.max(28, Math.min(40, Math.round(responsiveHeight / 11)));
 
   return (
-    <View style={styles.container}>
-      {/* Toolbar */}
-      <View
-        style={[
-          styles.toolbar,
-          { backgroundColor: theme.surface, borderColor: theme.border },
-        ]}
-      >
-        {/* Drawing Tools */}
-        <View style={styles.toolGroup}>
-          {(['pen', 'highlighter', 'eraser'] as DrawingTool[]).map((tool) => (
-            <TouchableOpacity
-              key={tool}
-              style={[
-                styles.toolButton,
-                activeTool === tool && {
-                  backgroundColor: COLORS.primary + '20',
-                },
-              ]}
-              onPress={() => setActiveTool(tool)}
-            >
-              <Ionicons
-                name={
-                  tool === 'pen'
-                    ? 'pencil'
-                    : tool === 'highlighter'
-                    ? 'color-fill'
-                    : 'close-circle'
-                }
-                size={ri(20)}
-                color={
-                  activeTool === tool ? COLORS.primary : theme.textSecondary
-                }
-              />
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Pen Colors (visible when pen active) */}
-        {activeTool === 'pen' && (
-          <View style={styles.toolGroup}>
-            {penColors.map((color, i) => (
-              <TouchableOpacity
-                key={i}
-                style={[
-                  styles.colorDot,
-                  { backgroundColor: color as string },
-                  activeColorIndex === i && styles.colorDotActive,
-                ]}
-                onPress={() => setActiveColorIndex(i)}
+    <View style={[styles.wrapper, { borderColor: theme.border, height: canvasHeight }]}> 
+      <GestureDetector gesture={drawGesture}>
+        <Canvas style={{ width: canvasWidth * zoomScale, height: canvasHeight * zoomScale }}>
+          <Group transform={[{ scale: zoomScale }]}> 
+            <Rect x={0} y={0} width={canvasWidth} height={canvasHeight} color={isDark ? '#0F1525' : '#FFFFFF'} />
+            {renderTemplate()}
+            {renderedStrokes.map((stroke) => (
+              <Path
+                key={stroke.id}
+                path={stroke.path}
+                color={stroke.color}
+                style="stroke"
+                strokeWidth={stroke.width}
+                strokeCap="round"
+                strokeJoin="round"
+                opacity={stroke.opacity}
               />
             ))}
-          </View>
-        )}
-
-        {/* Undo / Redo / Clear */}
-        <View style={styles.toolGroup}>
-          <TouchableOpacity
-            style={styles.toolButton}
-            onPress={handleUndo}
-            disabled={canvasState.strokes.length === 0}
-          >
-            <Ionicons
-              name="arrow-undo"
-              size={ri(20)}
-              color={
-                canvasState.strokes.length > 0
-                  ? theme.text
-                  : theme.textTertiary
-              }
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.toolButton}
-            onPress={handleRedo}
-            disabled={canvasState.undoneStrokes.length === 0}
-          >
-            <Ionicons
-              name="arrow-redo"
-              size={ri(20)}
-              color={
-                canvasState.undoneStrokes.length > 0
-                  ? theme.text
-                  : theme.textTertiary
-              }
-            />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.toolButton} onPress={handleClear}>
-            <Ionicons name="trash-outline" size={ri(18)} color={COLORS.error} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Canvas */}
-      <View
-        ref={canvasRef}
-        style={[
-          styles.canvas,
-          {
-            height: responsiveHeight,
-            backgroundColor: isDark ? COLORS.dark.surface : '#FFFFFF',
-            borderColor: theme.border,
-          },
-        ]}
-        {...panResponder.panHandlers}
-      >
-        {/* Grid lines */}
-        {Array.from({ length: Math.floor(responsiveHeight / gridSpacing) }).map(
-          (_, i) => (
-            <View
-              key={`grid-${i}`}
-              pointerEvents="none"
-              style={[
-                styles.gridLine,
-                {
-                  top: (i + 1) * gridSpacing,
-                  backgroundColor: theme.border + '40',
-                },
-              ]}
-            />
-          )
-        )}
-
-        {/* Saved strokes */}
-        {canvasState.strokes.map((stroke, i) => renderStroke(stroke, i))}
-
-        {/* Current stroke being drawn */}
-        {renderCurrentStroke()}
-      </View>
+            {draftPoints.length > 1 && (
+              <Path
+                path={draftPath}
+                color={activeTool === 'highlighter' ? highlighterColor : penColor}
+                style="stroke"
+                strokeWidth={activeTool === 'highlighter' ? highlighterSize : penSize}
+                opacity={activeTool === 'highlighter' ? 0.33 : 1}
+                strokeCap="round"
+                strokeJoin="round"
+              />
+            )}
+          </Group>
+        </Canvas>
+      </GestureDetector>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    marginBottom: rs(SPACING.md),
-  },
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    paddingHorizontal: rs(SPACING.md),
-    paddingVertical: rs(SPACING.sm),
-    gap: rs(SPACING.xs),
+  wrapper: {
+    width: '100%',
     borderWidth: 1,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: rr(RADIUS.lg),
-    borderTopRightRadius: rr(RADIUS.lg),
-  },
-  toolGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: rs(SPACING.xs),
-  },
-  toolButton: {
-    width: ri(36),
-    height: ri(36),
-    borderRadius: rr(RADIUS.sm),
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  colorDot: {
-    width: ri(22),
-    height: ri(22),
-    borderRadius: ri(22) / 2,
-    marginHorizontal: 2,
-  },
-  colorDotActive: {
-    borderWidth: 2.5,
-    borderColor: COLORS.primary,
-    transform: [{ scale: 1.15 }],
-  },
-  canvas: {
-    borderWidth: 1,
-    borderBottomLeftRadius: rr(RADIUS.lg),
-    borderBottomRightRadius: rr(RADIUS.lg),
+    borderRadius: 16,
     overflow: 'hidden',
-    position: 'relative',
-  },
-  gridLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#FFFFFF',
   },
 });

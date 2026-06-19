@@ -12,6 +12,7 @@ interface TasksState {
   deleteTask: (id: string) => Promise<void>;
   toggleTaskComplete: (id: string) => Promise<void>;
   getTasksByNote: (noteId: string) => Task[];
+  getTasksByPage: (pageId: string) => Task[];
   getTasksBySubject: (subjectId: string) => Task[];
 }
 
@@ -61,6 +62,10 @@ export const useTasksStore = create<TasksState>((set, get) => ({
 
   getTasksByNote: (noteId) => {
     return get().tasks.filter((t) => t.noteId === noteId);
+  },
+
+  getTasksByPage: (pageId) => {
+    return get().tasks.filter((t) => t.pageId === pageId);
   },
 
   getTasksBySubject: (subjectId) => {

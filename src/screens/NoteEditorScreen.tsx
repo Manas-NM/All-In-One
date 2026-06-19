@@ -1,1161 +1,596 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
+  TextInput,
+  ScrollView,
   Alert,
   Modal,
-  ActivityIndicator,
   useColorScheme,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import DrawingCanvas from '../components/DrawingCanvas';
-import TaskForm from '../components/TaskForm';
-import FlashcardGenerator from '../components/FlashcardGenerator';
-import PrintPreviewModal from '../components/PrintPreviewModal';
-import { useNotesStore } from '../store/notesStore';
-import { useSubjectsStore } from '../store/subjectsStore';
+import { useEditorStore } from '../store/editorStore';
+import { useToolStore } from '../store/toolStore';
 import { useTasksStore } from '../store/tasksStore';
 import { useFlashcardsStore } from '../store/flashcardsStore';
-import { exportNoteToPdf } from '../services/storage';
-import { getNoteById } from '../services/database';
+import { exportNotebookToPdf } from '../services/storage';
 import { summarizeNote } from '../services/aiService';
 import { recognizeTextFromCanvas, strokesToSvg } from '../services/ocrService';
-import { printNote } from '../services/printService';
-import { Stroke, NotesStackParamList, Subject, Task } from '../types';
-import {
-  COLORS,
-  NOTE_CARD_COLORS,
-  PRIORITY_CONFIG,
-  FONT_SIZES,
-  SPACING,
-  RADIUS,
-} from '../utils/constants';
-import {
-  rf,
-  rs,
-  rr,
-  ri,
-  getScreenHorizontalPadding,
-  getMaxContentWidth,
-  getCanvasDimensions,
-} from '../utils/responsive';
+import { upsertCanvasObject, resolveLegacyNoteToPage } from '../services/database';
+import { NotesStackParamList, Stroke, CanvasTemplate } from '../types';
+import { COLORS, FONT_SIZES, SPACING, RADIUS, PEN_COLORS } from '../utils/constants';
+import { rf, rs, rr, ri, getScreenHorizontalPadding, getCanvasDimensions } from '../utils/responsive';
 
-type EditorRoute = RouteProp<NotesStackParamList, 'NoteEditor'>;
-type NavProp = NativeStackNavigationProp<NotesStackParamList>;
+type RouteT = RouteProp<NotesStackParamList, 'NoteEditor'>;
+type NavT = NativeStackNavigationProp<NotesStackParamList, 'NoteEditor'>;
+
+const templates: CanvasTemplate[] = ['lined', 'grid', 'dotted', 'blank', 'cornell'];
 
 export default function NoteEditorScreen() {
-  const navigation = useNavigation<NavProp>();
-  const route = useRoute<EditorRoute>();
+  const navigation = useNavigation<NavT>();
+  const route = useRoute<RouteT>();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = isDark ? COLORS.dark : COLORS.light;
 
-  const { createNote, updateNote } = useNotesStore();
-  const { subjects, loadSubjects } = useSubjectsStore();
-  const { tasks, loadTasks } = useTasksStore();
+  const {
+    notebook,
+    pages,
+    activePageId,
+    activeStrokes,
+    isLoading,
+    openNotebook,
+    setActivePage,
+    saveActivePage,
+    addPage,
+    deletePage,
+    duplicatePage,
+  } = useEditorStore();
 
-  const noteId = route.params?.noteId;
-  const isNew = !noteId;
+  const {
+    activeTool,
+    penColor,
+    penSize,
+    highlighterColor,
+    highlighterSize,
+    zenMode,
+    setActiveTool,
+    setPenColor,
+    setPenSize,
+    setHighlighterSize,
+    toggleZenMode,
+  } = useToolStore();
 
-  const [title, setTitle] = useState('');
-  const [textContent, setTextContent] = useState('');
+  const { addTask } = useTasksStore();
+  const { createDeck, addBulkCards } = useFlashcardsStore();
+
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [noteColor, setNoteColor] = useState<string>(
-    NOTE_CARD_COLORS[Math.floor(Math.random() * NOTE_CARD_COLORS.length)]
-  );
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [subjectId, setSubjectId] = useState<string | null>(null);
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [ocrText, setOcrText] = useState<string | null>(null);
-  const [showSubjectPicker, setShowSubjectPicker] = useState(false);
-  const [showAiModal, setShowAiModal] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [tempSummary, setTempSummary] = useState<string>('');
-  const [showTaskForm, setShowTaskForm] = useState(false);
-  // OCR state
-  const [showOcrModal, setShowOcrModal] = useState(false);
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrResult, setOcrResult] = useState<string>('');
-  // Flashcard generator
-  const [showFlashcardGen, setShowFlashcardGen] = useState(false);
-  // Print
-  const [showPrintModal, setShowPrintModal] = useState(false);
-  const [printOptions, setPrintOptions] = useState({
-    includeDrawing: true,
-    includeSummary: true,
-    includeOcrText: false,
-  });
+  const [pageText, setPageText] = useState('');
+  const [showTextModal, setShowTextModal] = useState(false);
+  const [showAiSummary, setShowAiSummary] = useState(false);
+  const [aiSummary, setAiSummary] = useState('');
+  const [zoomScale, setZoomScale] = useState(1);
 
-  const hasChanges = useRef(false);
+  const activePage = useMemo(
+    () => pages.find((p) => p.id === activePageId) ?? null,
+    [pages, activePageId]
+  );
+
+  const loadNotebook = useCallback(async () => {
+    let notebookId = route.params?.notebookId;
+    let pageId = route.params?.pageId;
+
+    if (!notebookId && route.params?.noteId) {
+      const mapping = await resolveLegacyNoteToPage(route.params.noteId);
+      notebookId = mapping?.notebookId;
+      pageId = mapping?.pageId;
+    }
+
+    if (!notebookId) return;
+    await openNotebook(notebookId, pageId);
+  }, [route.params, openNotebook]);
 
   useEffect(() => {
-    loadSubjects();
-    loadTasks();
-    if (noteId) {
-      loadNote();
-    } else {
-      setIsLoaded(true);
-    }
-  }, [noteId]);
+    loadNotebook();
+  }, [loadNotebook]);
 
-  const loadNote = async () => {
-    if (!noteId) return;
-    try {
-      const note = await getNoteById(noteId);
-      if (note) {
-        setTitle(note.title);
-        setTextContent(note.textContent);
-        setNoteColor(note.color);
-        setSubjectId(note.subjectId);
-        setAiSummary(note.aiSummary);
-        setOcrText(note.ocrText ?? null);
-        try {
-          const parsed = JSON.parse(note.content);
-          if (Array.isArray(parsed)) setStrokes(parsed);
-        } catch {}
-      }
-    } catch (error) {
-      console.error('Failed to load note:', error);
-    }
-    setIsLoaded(true);
+  useEffect(() => {
+    setStrokes(activeStrokes);
+  }, [activeStrokes, activePageId]);
+
+  const handleSavePage = async () => {
+    if (!notebook || !activePage) return;
+
+    await saveActivePage(strokes, pageText);
+
+    await upsertCanvasObject({
+      id: `text_${activePage.id}`,
+      pageId: activePage.id,
+      type: 'text',
+      payload: JSON.stringify({ text: pageText }),
+      zIndex: 1,
+    });
+
+    Alert.alert('Saved', 'Page changes saved successfully.');
   };
 
-  const handleSave = useCallback(async () => {
-    const trimmedTitle = title.trim() || 'Untitled Note';
-    const content = JSON.stringify(strokes);
+  const handleAddTaskForPage = async () => {
+    if (!notebook || !activePage) return;
 
-    try {
-      if (isNew) {
-        await createNote({
-          title: trimmedTitle,
-          content,
-          textContent: textContent.trim(),
-          color: noteColor,
-          isFavorite: false,
-          subjectId,
-          aiSummary,
-          ocrText,
-        });
-      } else if (noteId) {
-        await updateNote(noteId, {
-          title: trimmedTitle,
-          content,
-          textContent: textContent.trim(),
-          color: noteColor,
-          subjectId,
-          aiSummary,
-          ocrText,
-        });
-      }
-      navigation.goBack();
-    } catch (error) {
-      Alert.alert('Error', 'Failed to save note. Please try again.');
+    await addTask({
+      title: `${notebook.title} • ${activePage.title}`,
+      description: 'Linked from notebook page',
+      dueDate: null,
+      priority: 'medium',
+      completed: false,
+      noteId: null,
+      notebookId: notebook.id,
+      pageId: activePage.id,
+      subjectId: notebook.folderId ?? null,
+    });
+    Alert.alert('Task Added', 'A task linked to this page has been created.');
+  };
+
+  const handleGenerateFlashcards = async () => {
+    if (!notebook || !activePage) return;
+    if (!pageText.trim()) {
+      Alert.alert('No text', 'Please add some typed notes first.');
+      return;
     }
-  }, [title, textContent, strokes, noteColor, isNew, noteId, subjectId, aiSummary, ocrText]);
 
-  const handleExportPdf = async () => {
+    const deck = await createDeck({
+      name: `${notebook.title} - ${activePage.title}`,
+      description: 'Auto-generated from notebook page text',
+      subjectId: notebook.folderId ?? null,
+      noteId: null,
+      notebookId: notebook.id,
+      pageId: activePage.id,
+    });
+
+    const lines = pageText
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 10);
+
+    const cards = lines.map((line, index) => ({
+      front: `Key point ${index + 1}?`,
+      back: line,
+    }));
+
+    await addBulkCards(deck.id, cards);
+    Alert.alert('Flashcards Ready', `Created ${cards.length} cards in deck "${deck.name}".`);
+  };
+
+  const handleOCR = async () => {
+    if (strokes.length === 0) {
+      Alert.alert('No writing detected', 'Write something before running OCR.');
+      return;
+    }
+
     try {
       const { width, height } = getCanvasDimensions();
-      await exportNoteToPdf(
-        title.trim() || 'Untitled Note',
-        textContent,
-        strokes,
-        width,
-        height
-      );
-    } catch (error) {
-      Alert.alert('Export Error', 'Failed to export PDF.');
-    }
-  };
+      const svg = strokesToSvg(strokes, width, height);
+      const btoaFn = (globalThis as any).btoa as ((value: string) => string) | undefined;
+      if (!btoaFn) throw new Error('Base64 encoder unavailable');
+      const base64 = btoaFn(unescape(encodeURIComponent(svg)));
 
-  const handleStrokesChange = (newStrokes: Stroke[]) => {
-    setStrokes(newStrokes);
-    hasChanges.current = true;
+      const result = await recognizeTextFromCanvas(base64);
+      if (result.error) {
+        Alert.alert('OCR Error', result.error);
+        return;
+      }
+      setPageText((prev) => (prev ? `${prev}\n${result.text}` : result.text));
+      Alert.alert('OCR Complete', 'Recognized text appended to page notes.');
+    } catch (error: any) {
+      Alert.alert('OCR Error', error?.message || 'Failed to run OCR.');
+    }
   };
 
   const handleSummarize = async () => {
-    setAiLoading(true);
-    setShowAiModal(true);
-    setTempSummary('');
-
-    const result = await summarizeNote(title, textContent);
-
-    setAiLoading(false);
+    const result = await summarizeNote(notebook?.title || 'Notebook', pageText);
     if (result.error) {
-      setTempSummary('');
       Alert.alert('AI Error', result.error);
-      setShowAiModal(false);
-    } else if (result.summary) {
-      setTempSummary(result.summary);
-    }
-  };
-
-  const handleSaveSummary = () => {
-    setAiSummary(tempSummary);
-    setShowAiModal(false);
-    hasChanges.current = true;
-  };
-
-  const handleSaveTask = async (data: any) => {
-    try {
-      await useTasksStore.getState().addTask({
-        ...data,
-        noteId: noteId ?? null,
-        completed: false,
-      });
-      loadTasks();
-    } catch {
-      Alert.alert('Error', 'Failed to create task.');
-    }
-  };
-
-  // ─── OCR ──────────────────────────────────────────────────────
-
-  const handleOcr = async () => {
-    if (strokes.length === 0) {
-      Alert.alert('No Drawing', 'Draw something on the canvas first to extract text.');
       return;
     }
-    setOcrLoading(true);
-    setShowOcrModal(true);
-    setOcrResult('');
-
-    try {
-      // Generate SVG from strokes and convert to a basic base64 representation
-      const { width, height } = getCanvasDimensions();
-      const svg = strokesToSvg(strokes, width, height);
-      // Convert SVG to base64 for the API
-      const base64 = btoa(unescape(encodeURIComponent(svg)));
-
-      const result = await recognizeTextFromCanvas(base64);
-      setOcrLoading(false);
-
-      if (result.error) {
-        setOcrResult('');
-        Alert.alert('OCR Error', result.error);
-        setShowOcrModal(false);
-      } else {
-        setOcrResult(result.text);
-      }
-    } catch (e: any) {
-      setOcrLoading(false);
-      Alert.alert('OCR Error', e.message || 'Failed to extract text.');
-      setShowOcrModal(false);
-    }
+    setAiSummary(result.summary ?? '');
+    setShowAiSummary(true);
   };
 
-  const handleSaveOcrText = () => {
-    setOcrText(ocrResult);
-    setShowOcrModal(false);
-    hasChanges.current = true;
+  const handleExport = async () => {
+    if (!notebook) return;
+    const pagePayload = await Promise.all(
+      pages.map(async (page) => ({
+        title: page.title,
+        template: page.template,
+        strokes: page.id === activePageId ? strokes : [],
+        text: page.id === activePageId ? pageText : '',
+      }))
+    );
+
+    const { width, height } = getCanvasDimensions();
+    await exportNotebookToPdf(notebook.title, pagePayload, width, height);
   };
 
-  // ─── Flashcard Generation ─────────────────────────────────────
-
-  const handleSaveFlashcards = async (cards: { front: string; back: string }[]) => {
-    try {
-      const deck = await useFlashcardsStore.getState().createDeck({
-        name: `From: ${title.trim() || 'Untitled Note'}`,
-        description: `Generated from note`,
-        subjectId: subjectId,
-        noteId: noteId ?? null,
-      });
-      await useFlashcardsStore.getState().addBulkCards(deck.id, cards);
-      Alert.alert('Success', `Created deck with ${cards.length} flashcards!`);
-    } catch {
-      Alert.alert('Error', 'Failed to save flashcards.');
-    }
+  const handleImportPdf = async () => {
+    const result = await DocumentPicker.getDocumentAsync({ type: 'application/pdf' });
+    if (result.canceled) return;
+    await addPage('blank');
+    Alert.alert('PDF Imported', 'PDF was added as a new annotation-ready page placeholder.');
   };
 
-  // ─── Print ────────────────────────────────────────────────────
+  const handleInsertImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.9,
+    });
 
-  const handlePrint = async () => {
-    setShowPrintModal(false);
-    try {
-      const note = {
-        id: noteId ?? '',
-        title: title.trim() || 'Untitled Note',
-        content: JSON.stringify(strokes),
-        textContent,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        color: noteColor,
-        isFavorite: false,
-        subjectId,
-        aiSummary,
-        ocrText,
-      };
-      const { width, height } = getCanvasDimensions();
-      await printNote(note, strokes, {
-        includeDrawing: printOptions.includeDrawing,
-        includeSummary: printOptions.includeSummary,
-        includeOcrText: printOptions.includeOcrText,
-        canvasWidth: width,
-        canvasHeight: height,
-      });
-    } catch {
-      Alert.alert('Print Error', 'Failed to print note.');
-    }
+    if (result.canceled || !activePage) return;
+
+    await upsertCanvasObject({
+      id: `image_${Date.now()}`,
+      pageId: activePage.id,
+      type: 'image',
+      payload: JSON.stringify({ uri: result.assets[0].uri }),
+      zIndex: 20,
+    });
+
+    Alert.alert('Image inserted', 'Image object added to this page.');
   };
 
-  const selectedSubject = subjects.find((s) => s.id === subjectId);
-  const linkedTasks = noteId ? tasks.filter((t) => t.noteId === noteId) : [];
-  const headerTopPadding = Math.max(insets.top, rs(8)) + rs(4);
-  const horizontalPadding = getScreenHorizontalPadding();
-  const maxContentWidth = getMaxContentWidth();
-
-  if (!isLoaded) {
+  if (isLoading || !notebook) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <View style={styles.loadingContainer}>
-          <Text style={{ color: theme.textSecondary, fontSize: rf(FONT_SIZES.body) }}>
-            Loading...
-          </Text>
-        </View>
+      <View style={[styles.center, { backgroundColor: theme.background }]}> 
+        <Text style={{ color: theme.text }}>Loading notebook…</Text>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: theme.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      {/* Header */}
+    <View style={[styles.container, { backgroundColor: theme.background }]}> 
       <View
         style={[
           styles.header,
           {
+            paddingTop: insets.top + rs(8),
             borderBottomColor: theme.border,
-            paddingTop: headerTopPadding,
-            paddingHorizontal: rs(SPACING.md),
+            backgroundColor: theme.surface,
           },
         ]}
       >
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="chevron-back" size={ri(24)} color={COLORS.primary} />
-          <Text style={[styles.backText, { color: COLORS.primary }]}>Notes</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="chevron-back" size={ri(24)} color={theme.text} />
         </TouchableOpacity>
-
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
+            {notebook.title}
+          </Text>
+          <Text style={[styles.headerSub, { color: theme.textSecondary }]}>
+            {activePage?.title || 'Page'} • {activePage?.template.toUpperCase()}
+          </Text>
+        </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() => setShowColorPicker(!showColorPicker)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <View style={[styles.colorIndicator, { backgroundColor: noteColor }]} />
+          <TouchableOpacity style={styles.headerBtn} onPress={toggleZenMode}>
+            <Ionicons name={zenMode ? 'eye-off-outline' : 'eye-outline'} size={ri(20)} color={theme.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() => setShowPrintModal(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="print-outline" size={ri(20)} color={theme.text} />
+          <TouchableOpacity style={styles.headerBtn} onPress={handleExport}>
+            <Ionicons name="print-outline" size={ri(20)} color={theme.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={handleExportPdf}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="share-outline" size={ri(20)} color={theme.text} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <Text style={styles.saveText}>Save</Text>
+          <TouchableOpacity style={styles.saveBtn} onPress={handleSavePage}>
+            <Ionicons name="save-outline" size={ri(18)} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Color picker row */}
-      {showColorPicker && (
-        <View
-          style={[
-            styles.colorPicker,
-            { backgroundColor: theme.surface, borderBottomColor: theme.border },
-          ]}
-        >
-          {NOTE_CARD_COLORS.map((color) => (
-            <TouchableOpacity
-              key={color}
-              style={[
-                styles.colorOption,
-                { backgroundColor: color },
-                noteColor === color && styles.colorOptionActive,
-              ]}
-              onPress={() => {
-                setNoteColor(color);
-                setShowColorPicker(false);
-              }}
-            />
-          ))}
-        </View>
-      )}
-
-      <ScrollView
-        style={styles.scrollView}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingHorizontal: horizontalPadding,
-          paddingBottom: insets.bottom + rs(100),
-          alignSelf: 'center',
-          width: '100%',
-          maxWidth: maxContentWidth,
-        }}
-      >
-        {/* Title */}
-        <TextInput
-          style={[styles.titleInput, { color: theme.text }]}
-          value={title}
-          onChangeText={(t) => {
-            setTitle(t);
-            hasChanges.current = true;
-          }}
-          placeholder="Note title"
-          placeholderTextColor={theme.textTertiary}
-        />
-
-        {/* Subject selector */}
-        <TouchableOpacity
-          style={[
-            styles.subjectSelector,
-            {
-              backgroundColor: selectedSubject
-                ? selectedSubject.color + '15'
-                : theme.surface,
-              borderColor: selectedSubject
-                ? selectedSubject.color
-                : theme.border,
-            },
-          ]}
-          onPress={() => setShowSubjectPicker(!showSubjectPicker)}
-        >
-          {selectedSubject ? (
-            <>
-              <Ionicons
-                name={selectedSubject.icon as any}
-                size={ri(16)}
-                color={selectedSubject.color}
-              />
-              <Text
-                style={[styles.subjectText, { color: selectedSubject.color }]}
-                numberOfLines={1}
-              >
-                {selectedSubject.name}
-              </Text>
-            </>
-          ) : (
-            <>
-              <Ionicons name="folder-outline" size={ri(16)} color={theme.textTertiary} />
-              <Text style={[styles.subjectText, { color: theme.textTertiary }]}>
-                No subject
-              </Text>
-            </>
-          )}
-          <Ionicons name="chevron-down" size={ri(14)} color={theme.textTertiary} />
-        </TouchableOpacity>
-
-        {showSubjectPicker && (
-          <View
-            style={[
-              styles.subjectDropdown,
-              { backgroundColor: theme.surface, borderColor: theme.border },
-            ]}
-          >
-            <TouchableOpacity
-              style={styles.subjectDropdownItem}
-              onPress={() => {
-                setSubjectId(null);
-                setShowSubjectPicker(false);
-                hasChanges.current = true;
-              }}
-            >
-              <Text style={[styles.subjectDropdownText, { color: theme.textSecondary }]}>
-                None
-              </Text>
-            </TouchableOpacity>
-            {subjects.map((s) => (
+      <View style={styles.body}>
+        <View style={[styles.sidebar, { borderColor: theme.border, backgroundColor: theme.surface }]}> 
+          <ScrollView contentContainerStyle={{ paddingBottom: rs(10) }}>
+            {pages.map((page) => (
               <TouchableOpacity
-                key={s.id}
-                style={styles.subjectDropdownItem}
-                onPress={() => {
-                  setSubjectId(s.id);
-                  setShowSubjectPicker(false);
-                  hasChanges.current = true;
-                }}
+                key={page.id}
+                style={[
+                  styles.pageThumb,
+                  {
+                    borderColor: activePageId === page.id ? COLORS.primary : theme.border,
+                    backgroundColor: activePageId === page.id ? `${COLORS.primary}14` : theme.surface,
+                  },
+                ]}
+                onPress={() => setActivePage(page.id)}
+                onLongPress={() =>
+                  Alert.alert(page.title, 'Manage page', [
+                    { text: 'Duplicate', onPress: () => duplicatePage(page.id) },
+                    { text: 'Delete', style: 'destructive', onPress: () => deletePage(page.id) },
+                    { text: 'Cancel', style: 'cancel' },
+                  ])
+                }
               >
-                <View style={[styles.subjectDropdownDot, { backgroundColor: s.color }]} />
-                <Ionicons name={s.icon as any} size={ri(14)} color={s.color} />
-                <Text
-                  style={[styles.subjectDropdownText, { color: theme.text, marginLeft: rs(6) }]}
-                  numberOfLines={1}
-                >
-                  {s.name}
-                </Text>
+                <Text style={[styles.pageNo, { color: theme.text }]}>{page.pageNumber}</Text>
+                <Text style={[styles.pageLabel, { color: theme.textSecondary }]} numberOfLines={1}>{page.title}</Text>
               </TouchableOpacity>
             ))}
-          </View>
-        )}
-
-        {/* Drawing Canvas */}
-        <View style={styles.canvasSection}>
-          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
-            DRAWING
-          </Text>
-          <DrawingCanvas
-            initialStrokes={strokes}
-            onStrokesChange={handleStrokesChange}
-          />
+            <TouchableOpacity style={[styles.addPageBtn, { borderColor: theme.border }]} onPress={() => addPage()}>
+              <Ionicons name="add" size={ri(18)} color={COLORS.primary} />
+              <Text style={[styles.addPageText, { color: COLORS.primary }]}>Add</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
 
-        {/* Text Content */}
-        <View style={styles.textSection}>
-          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
-            TEXT NOTES
-          </Text>
-          <TextInput
-            style={[
-              styles.textInput,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-                color: theme.text,
-              },
-            ]}
-            value={textContent}
-            onChangeText={(t) => {
-              setTextContent(t);
-              hasChanges.current = true;
-            }}
-            placeholder="Type your notes here..."
-            placeholderTextColor={theme.textTertiary}
-            multiline
-            textAlignVertical="top"
-          />
-        </View>
-
-        {/* Action Buttons Row */}
-        <View style={styles.actionButtonsRow}>
-          {/* AI Summarize */}
-          <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: COLORS.primary + '12' }]}
-            onPress={handleSummarize}
-          >
-            <Text style={styles.actionBtnIcon}>✨</Text>
-            <Text style={[styles.actionBtnText, { color: COLORS.primary }]}>
-              Summarize
-            </Text>
-          </TouchableOpacity>
-
-          {/* OCR */}
-          <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: COLORS.warning + '20' }]}
-            onPress={handleOcr}
-          >
-            <Ionicons name="scan" size={ri(16)} color={COLORS.warning} />
-            <Text style={[styles.actionBtnText, { color: COLORS.warning }]}>
-              OCR
-            </Text>
-          </TouchableOpacity>
-
-          {/* Generate Flashcards */}
-          <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: COLORS.accent + '15' }]}
-            onPress={() => setShowFlashcardGen(true)}
-          >
-            <Ionicons name="albums" size={ri(16)} color={COLORS.accent} />
-            <Text style={[styles.actionBtnText, { color: COLORS.accent }]}>
-              Flashcards
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Saved AI Summary */}
-        {aiSummary && (
-          <View
-            style={[
-              styles.summaryCard,
-              { backgroundColor: COLORS.primary + '08', borderColor: COLORS.primary + '30' },
-            ]}
-          >
-            <View style={styles.summaryHeader}>
-              <Text style={[styles.summaryTitle, { color: COLORS.primary }]}>
-                ✨ AI Summary
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setAiSummary(null);
-                  hasChanges.current = true;
-                }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close-circle" size={ri(18)} color={theme.textTertiary} />
+        <View style={styles.editorPanel}>
+          {!zenMode && (
+            <View style={[styles.floatingToolbar, { backgroundColor: theme.surface, borderColor: theme.border }]}> 
+              <TouchableOpacity style={styles.toolBtn} onPress={() => setActiveTool('pen')}>
+                <Ionicons name="pencil" size={ri(18)} color={activeTool === 'pen' ? COLORS.primary : theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={() => setActiveTool('highlighter')}>
+                <Ionicons name="color-fill" size={ri(18)} color={activeTool === 'highlighter' ? COLORS.primary : theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={() => setActiveTool('eraser')}>
+                <Ionicons name="close-circle" size={ri(18)} color={activeTool === 'eraser' ? COLORS.primary : theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={() => setShowTextModal(true)}>
+                <Ionicons name="text" size={ri(18)} color={theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={handleInsertImage}>
+                <Ionicons name="image-outline" size={ri(18)} color={theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={handleImportPdf}>
+                <Ionicons name="document-attach-outline" size={ri(18)} color={theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={() => setZoomScale((z) => Math.max(1, Math.min(3, z + 0.25)))}>
+                <Ionicons name="add-circle-outline" size={ri(18)} color={theme.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolBtn} onPress={() => setZoomScale((z) => Math.max(1, z - 0.25))}>
+                <Ionicons name="remove-circle-outline" size={ri(18)} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
-            <Text style={[styles.summaryText, { color: theme.text }]}>
-              {aiSummary}
-            </Text>
-          </View>
-        )}
+          )}
 
-        {/* Saved OCR Text */}
-        {ocrText && (
-          <View
-            style={[
-              styles.summaryCard,
-              { backgroundColor: COLORS.warning + '08', borderColor: COLORS.warning + '30' },
-            ]}
-          >
-            <View style={styles.summaryHeader}>
-              <Text style={[styles.summaryTitle, { color: COLORS.warning }]}>
-                🔍 Extracted Text (OCR)
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setOcrText(null);
-                  hasChanges.current = true;
-                }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close-circle" size={ri(18)} color={theme.textTertiary} />
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.summaryText, { color: theme.text }]}>
-              {ocrText}
-            </Text>
-          </View>
-        )}
+          <ScrollView horizontal contentContainerStyle={{ paddingHorizontal: rs(6), paddingBottom: rs(6) }}>
+            <DrawingCanvas
+              initialStrokes={strokes}
+              onStrokesChange={setStrokes}
+              canvasHeight={getCanvasDimensions().height}
+              canvasWidth={getCanvasDimensions().width}
+              template={activePage?.template || 'lined'}
+              activeTool={activeTool}
+              penColor={penColor}
+              penSize={penSize}
+              highlighterColor={highlighterColor}
+              highlighterSize={highlighterSize}
+              zoomScale={zoomScale}
+            />
+          </ScrollView>
 
-        {/* Linked Tasks Section */}
-        {!isNew && (
-          <View style={styles.tasksSection}>
-            <View style={styles.tasksSectionHeader}>
-              <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
-                LINKED TASKS
-              </Text>
-              <TouchableOpacity
-                onPress={() => setShowTaskForm(true)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="add-circle-outline" size={ri(20)} color={COLORS.primary} />
-              </TouchableOpacity>
-            </View>
-            {linkedTasks.length === 0 ? (
-              <Text style={[styles.noTasks, { color: theme.textTertiary }]}>
-                No tasks linked to this note
-              </Text>
-            ) : (
-              linkedTasks.map((task) => (
-                <View
-                  key={task.id}
-                  style={[
-                    styles.miniTask,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
-                  <View
+          {!zenMode && (
+            <View style={[styles.actionsRow, { borderTopColor: theme.border }]}> 
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: rs(8) }}>
+                {PEN_COLORS.map((color) => (
+                  <TouchableOpacity
+                    key={color}
                     style={[
-                      styles.miniTaskDot,
+                      styles.colorDot,
                       {
-                        backgroundColor: task.completed
-                          ? COLORS.success
-                          : PRIORITY_CONFIG[task.priority].color,
+                        backgroundColor: color,
+                        borderColor: penColor === color ? COLORS.primary : '#fff',
                       },
                     ]}
+                    onPress={() => setPenColor(color)}
                   />
-                  <Text
-                    style={[
-                      styles.miniTaskText,
-                      {
-                        color: theme.text,
-                        textDecorationLine: task.completed ? 'line-through' : 'none',
-                      },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {task.title}
-                  </Text>
-                  {task.completed && (
-                    <Ionicons name="checkmark-circle" size={ri(14)} color={COLORS.success} />
-                  )}
-                </View>
-              ))
-            )}
-          </View>
-        )}
-      </ScrollView>
+                ))}
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={() => setPenSize(Math.max(1, penSize - 1))}>
+                  <Text style={{ color: theme.textSecondary }}>Pen -</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={() => setPenSize(Math.min(12, penSize + 1))}>
+                  <Text style={{ color: theme.textSecondary }}>Pen +</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={() => setHighlighterSize(Math.max(4, highlighterSize - 1))}>
+                  <Text style={{ color: theme.textSecondary }}>HL -</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={() => setHighlighterSize(Math.min(24, highlighterSize + 1))}>
+                  <Text style={{ color: theme.textSecondary }}>HL +</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={handleOCR}>
+                  <Text style={{ color: theme.textSecondary }}>OCR</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={handleSummarize}>
+                  <Text style={{ color: theme.textSecondary }}>AI</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={handleAddTaskForPage}>
+                  <Text style={{ color: theme.textSecondary }}>Link Task</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.quickBtn, { borderColor: theme.border }]} onPress={handleGenerateFlashcards}>
+                  <Text style={{ color: theme.textSecondary }}>Flashcards</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          )}
+        </View>
+      </View>
 
-      {/* AI Summary Modal */}
-      <Modal visible={showAiModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.modalContainer,
-              {
-                backgroundColor: theme.background,
-                paddingBottom: insets.bottom + rs(SPACING.lg),
-              },
-            ]}
-          >
-            <View style={[styles.modalHeader, { paddingHorizontal: horizontalPadding }]}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>
-                ✨ AI Summary
-              </Text>
-              <TouchableOpacity onPress={() => setShowAiModal(false)}>
-                <Ionicons name="close" size={ri(24)} color={theme.textSecondary} />
+      <Modal visible={showTextModal} animationType="slide" transparent>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}> 
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Page Text Box</Text>
+              <TouchableOpacity onPress={() => setShowTextModal(false)}>
+                <Ionicons name="close" size={ri(20)} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
-
-            <ScrollView
-              style={styles.modalBody}
-              contentContainerStyle={{ paddingHorizontal: horizontalPadding }}
-            >
-              {aiLoading ? (
-                <View style={styles.aiLoadingContainer}>
-                  <ActivityIndicator size="large" color={COLORS.primary} />
-                  <Text
-                    style={[styles.aiLoadingText, { color: theme.textSecondary }]}
-                  >
-                    Generating summary...
-                  </Text>
-                </View>
-              ) : tempSummary ? (
-                <Text style={[styles.modalSummaryText, { color: theme.text }]}>
-                  {tempSummary}
-                </Text>
-              ) : null}
-            </ScrollView>
-
-            {!aiLoading && tempSummary && (
-              <View style={[styles.modalActions, { paddingHorizontal: horizontalPadding }]}>
-                <TouchableOpacity
-                  style={[styles.modalActionBtn, { backgroundColor: COLORS.primary }]}
-                  onPress={handleSaveSummary}
-                >
-                  <Ionicons name="save-outline" size={ri(16)} color="#FFF" />
-                  <Text style={styles.modalActionText}>Save Summary</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.modalActionBtn,
-                    { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border },
-                  ]}
-                  onPress={handleSummarize}
-                >
-                  <Ionicons name="refresh" size={ri(16)} color={theme.text} />
-                  <Text style={[styles.modalActionText, { color: theme.text }]}>
-                    Regenerate
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            <TextInput
+              multiline
+              style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+              placeholder="Type notes here..."
+              placeholderTextColor={theme.textTertiary}
+              value={pageText}
+              onChangeText={setPageText}
+            />
+            <View style={{ flexDirection: 'row', gap: rs(8), justifyContent: 'flex-end' }}>
+              <TouchableOpacity style={[styles.secondaryBtn, { borderColor: theme.border }]} onPress={() => setShowTextModal(false)}>
+                <Text style={{ color: theme.textSecondary }}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryBtn]} onPress={() => setShowTextModal(false)}>
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
 
-      {/* OCR Modal */}
-      <Modal visible={showOcrModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.modalContainer,
-              {
-                backgroundColor: theme.background,
-                paddingBottom: insets.bottom + rs(SPACING.lg),
-              },
-            ]}
-          >
-            <View style={[styles.modalHeader, { paddingHorizontal: horizontalPadding }]}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>
-                🔍 OCR Result
-              </Text>
-              <TouchableOpacity onPress={() => setShowOcrModal(false)}>
-                <Ionicons name="close" size={ri(24)} color={theme.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={styles.modalBody}
-              contentContainerStyle={{ paddingHorizontal: horizontalPadding }}
-            >
-              {ocrLoading ? (
-                <View style={styles.aiLoadingContainer}>
-                  <ActivityIndicator size="large" color={COLORS.warning} />
-                  <Text style={[styles.aiLoadingText, { color: theme.textSecondary }]}>
-                    Extracting text...
-                  </Text>
-                </View>
-              ) : ocrResult ? (
-                <TextInput
-                  style={[
-                    styles.ocrTextArea,
-                    { backgroundColor: theme.surface, color: theme.text, borderColor: theme.border },
-                  ]}
-                  value={ocrResult}
-                  onChangeText={setOcrResult}
-                  multiline
-                  textAlignVertical="top"
-                />
-              ) : null}
+      <Modal visible={showAiSummary} animationType="fade" transparent>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.summaryCard, { backgroundColor: theme.surface, borderColor: theme.border }]}> 
+            <Text style={[styles.modalTitle, { color: theme.text }]}>AI Summary</Text>
+            <ScrollView style={{ maxHeight: rs(220), marginTop: rs(10) }}>
+              <Text style={{ color: theme.textSecondary, fontSize: rf(FONT_SIZES.small), lineHeight: rf(20) }}>{aiSummary || 'No summary generated.'}</Text>
             </ScrollView>
-
-            {!ocrLoading && ocrResult && (
-              <View style={[styles.modalActions, { paddingHorizontal: horizontalPadding }]}>
-                <TouchableOpacity
-                  style={[styles.modalActionBtn, { backgroundColor: COLORS.warning }]}
-                  onPress={handleSaveOcrText}
-                >
-                  <Ionicons name="save-outline" size={ri(16)} color="#FFF" />
-                  <Text style={styles.modalActionText}>Save as Note Text</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.modalActionBtn,
-                    { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border },
-                  ]}
-                  onPress={handleOcr}
-                >
-                  <Ionicons name="refresh" size={ri(16)} color={theme.text} />
-                  <Text style={[styles.modalActionText, { color: theme.text }]}>
-                    Re-scan
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            <TouchableOpacity style={[styles.primaryBtn, { marginTop: rs(12), alignSelf: 'flex-end' }]} onPress={() => setShowAiSummary(false)}>
+              <Text style={{ color: '#fff', fontWeight: '600' }}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
-
-      {/* Flashcard Generator Modal */}
-      <FlashcardGenerator
-        visible={showFlashcardGen}
-        noteTitle={title}
-        noteContent={textContent}
-        onClose={() => setShowFlashcardGen(false)}
-        onSave={handleSaveFlashcards}
-      />
-
-      {/* Print Options Modal */}
-      <PrintPreviewModal
-        visible={showPrintModal}
-        title="Print Note"
-        options={[
-          { key: 'includeDrawing', label: 'Include Drawing', value: printOptions.includeDrawing },
-          { key: 'includeSummary', label: 'Include AI Summary', value: printOptions.includeSummary },
-          { key: 'includeOcrText', label: 'Include OCR Text', value: printOptions.includeOcrText },
-        ]}
-        onToggleOption={(key) =>
-          setPrintOptions((prev) => ({ ...prev, [key]: !prev[key as keyof typeof prev] }))
-        }
-        onPrint={handlePrint}
-        onClose={() => setShowPrintModal(false)}
-      />
-
-      {/* Task Form Modal */}
-      <TaskForm
-        visible={showTaskForm}
-        subjects={subjects}
-        notes={useNotesStore.getState().notes}
-        defaultNoteId={noteId}
-        defaultSubjectId={subjectId}
-        onClose={() => setShowTaskForm(false)}
-        onSave={handleSaveTask}
-      />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  container: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: rs(SPACING.sm + 2),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  backButton: {
+    borderBottomWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: rs(10),
+    paddingHorizontal: getScreenHorizontalPadding(),
+    paddingBottom: rs(10),
   },
-  backText: {
-    fontSize: rf(FONT_SIZES.subtitle),
-    marginLeft: 2,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: rs(SPACING.xs),
-  },
-  headerButton: {
-    padding: rs(SPACING.xs),
-  },
-  colorIndicator: {
-    width: ri(22),
-    height: ri(22),
-    borderRadius: ri(22) / 2,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  saveButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: rs(SPACING.lg),
-    paddingVertical: rs(SPACING.sm),
-    borderRadius: rr(RADIUS.sm),
-  },
-  saveText: {
-    color: '#FFF',
-    fontWeight: '600',
-    fontSize: rf(FONT_SIZES.body),
-  },
-  colorPicker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  headerTitle: { fontSize: rf(FONT_SIZES.title), fontWeight: '700' },
+  headerSub: { marginTop: rs(2), fontSize: rf(FONT_SIZES.caption), fontWeight: '600' },
+  headerActions: { flexDirection: 'row', gap: rs(8), alignItems: 'center' },
+  headerBtn: {
+    width: rs(34),
+    height: rs(34),
+    borderRadius: rr(RADIUS.md),
     justifyContent: 'center',
-    gap: rs(SPACING.md),
-    paddingVertical: rs(SPACING.md),
-    paddingHorizontal: rs(SPACING.md),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  colorOption: {
-    width: ri(28),
-    height: ri(28),
-    borderRadius: ri(28) / 2,
-  },
-  colorOptionActive: {
-    borderWidth: 3,
-    borderColor: '#FFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  titleInput: {
-    paddingVertical: rs(SPACING.lg),
-    fontSize: rf(FONT_SIZES.heading),
-    fontWeight: '700',
-  },
-  subjectSelector: {
-    flexDirection: 'row',
     alignItems: 'center',
+  },
+  saveBtn: {
+    width: rs(36),
+    height: rs(36),
+    borderRadius: rr(RADIUS.md),
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+  },
+  body: { flex: 1, flexDirection: 'row' },
+  sidebar: {
+    width: rs(92),
+    borderRightWidth: 1,
+    paddingTop: rs(8),
+    paddingHorizontal: rs(8),
+  },
+  pageThumb: {
     borderWidth: 1,
     borderRadius: rr(RADIUS.md),
-    paddingHorizontal: rs(SPACING.md),
-    paddingVertical: rs(SPACING.sm),
-    marginBottom: rs(SPACING.md),
-    gap: rs(SPACING.xs),
+    minHeight: rs(68),
+    padding: rs(8),
+    marginBottom: rs(8),
   },
-  subjectText: {
-    fontSize: rf(FONT_SIZES.body),
-    fontWeight: '500',
-    flex: 1,
-  },
-  subjectDropdown: {
+  pageNo: { fontSize: rf(FONT_SIZES.small), fontWeight: '700' },
+  pageLabel: { marginTop: rs(4), fontSize: rf(FONT_SIZES.caption) },
+  addPageBtn: {
     borderWidth: 1,
+    borderStyle: 'dashed',
     borderRadius: rr(RADIUS.md),
-    marginBottom: rs(SPACING.md),
-    overflow: 'hidden',
-  },
-  subjectDropdownItem: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: rs(SPACING.sm + 2),
-    paddingHorizontal: rs(SPACING.md),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(128,128,128,0.15)',
-    gap: rs(4),
+    justifyContent: 'center',
+    paddingVertical: rs(10),
   },
-  subjectDropdownDot: {
-    width: rs(6),
-    height: rs(6),
-    borderRadius: rs(3),
-    marginRight: rs(2),
+  addPageText: { marginTop: rs(4), fontSize: rf(FONT_SIZES.caption), fontWeight: '700' },
+  editorPanel: { flex: 1, padding: rs(8) },
+  floatingToolbar: {
+    borderWidth: 1,
+    borderRadius: rr(999),
+    paddingHorizontal: rs(8),
+    paddingVertical: rs(6),
+    flexDirection: 'row',
+    alignSelf: 'center',
+    gap: rs(6),
+    marginBottom: rs(8),
   },
-  subjectDropdownText: {
-    fontSize: rf(FONT_SIZES.body),
+  toolBtn: {
+    width: rs(30),
+    height: rs(30),
+    borderRadius: rr(999),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionsRow: {
+    borderTopWidth: 1,
+    paddingTop: rs(8),
+    marginTop: rs(8),
+  },
+  colorDot: {
+    width: rs(22),
+    height: rs(22),
+    borderRadius: rr(999),
+    borderWidth: 2,
+  },
+  quickBtn: {
+    borderWidth: 1,
+    borderRadius: rr(999),
+    paddingHorizontal: rs(10),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBackdrop: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    padding: rs(16),
   },
-  sectionLabel: {
-    fontSize: rf(FONT_SIZES.caption),
-    fontWeight: '600',
-    letterSpacing: 1,
-    marginBottom: rs(SPACING.sm),
-  },
-  canvasSection: {
-    marginBottom: rs(SPACING.xl),
-  },
-  textSection: {
-    marginBottom: rs(SPACING.xl),
-  },
-  textInput: {
+  modalCard: {
     borderWidth: 1,
     borderRadius: rr(RADIUS.lg),
-    padding: rs(SPACING.md + 2),
-    fontSize: rf(FONT_SIZES.bodyLarge),
-    lineHeight: rf(FONT_SIZES.bodyLarge) * 1.45,
-    minHeight: rs(120),
+    padding: rs(14),
   },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: rs(SPACING.sm),
-    marginBottom: rs(SPACING.lg),
-    flexWrap: 'wrap',
-  },
-  actionBtn: {
-    flex: 1,
-    minWidth: rs(90),
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  modalTitle: { fontSize: rf(FONT_SIZES.body), fontWeight: '700' },
+  modalInput: {
+    minHeight: rs(160),
+    borderWidth: 1,
     borderRadius: rr(RADIUS.md),
-    paddingVertical: rs(SPACING.sm + 2),
-    gap: rs(SPACING.xs),
-  },
-  actionBtnIcon: {
-    fontSize: rf(14),
-  },
-  actionBtnText: {
+    marginTop: rs(10),
+    marginBottom: rs(12),
+    padding: rs(10),
+    textAlignVertical: 'top',
     fontSize: rf(FONT_SIZES.small),
-    fontWeight: '600',
+  },
+  secondaryBtn: {
+    borderWidth: 1,
+    borderRadius: rr(RADIUS.md),
+    paddingHorizontal: rs(14),
+    paddingVertical: rs(9),
+  },
+  primaryBtn: {
+    borderRadius: rr(RADIUS.md),
+    paddingHorizontal: rs(14),
+    paddingVertical: rs(9),
+    backgroundColor: COLORS.primary,
   },
   summaryCard: {
     borderWidth: 1,
     borderRadius: rr(RADIUS.lg),
-    padding: rs(SPACING.md),
-    marginBottom: rs(SPACING.lg),
-  },
-  summaryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: rs(SPACING.sm),
-  },
-  summaryTitle: {
-    fontSize: rf(FONT_SIZES.body),
-    fontWeight: '600',
-  },
-  summaryText: {
-    fontSize: rf(FONT_SIZES.body),
-    lineHeight: rf(FONT_SIZES.body) * 1.5,
-  },
-  tasksSection: {
-    marginBottom: rs(SPACING.xl),
-  },
-  tasksSectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: rs(SPACING.sm),
-  },
-  noTasks: {
-    fontSize: rf(FONT_SIZES.small),
-    fontStyle: 'italic',
-  },
-  miniTask: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: rr(RADIUS.sm),
-    padding: rs(SPACING.sm + 2),
-    marginBottom: rs(SPACING.xs),
-    gap: rs(SPACING.sm),
-  },
-  miniTaskDot: {
-    width: rs(8),
-    height: rs(8),
-    borderRadius: rs(4),
-  },
-  miniTaskText: {
-    fontSize: rf(FONT_SIZES.body),
-    flex: 1,
-  },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  modalContainer: {
-    borderTopLeftRadius: rr(RADIUS.xxl),
-    borderTopRightRadius: rr(RADIUS.xxl),
-    paddingTop: rs(SPACING.lg),
-    maxHeight: '70%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: rs(SPACING.md),
-  },
-  modalTitle: {
-    fontSize: rf(FONT_SIZES.title),
-    fontWeight: '700',
-  },
-  modalBody: {
-    flex: 1,
-    marginBottom: rs(SPACING.md),
-  },
-  aiLoadingContainer: {
-    alignItems: 'center',
-    paddingVertical: rs(SPACING.huge),
-  },
-  aiLoadingText: {
-    marginTop: rs(SPACING.md),
-    fontSize: rf(FONT_SIZES.body),
-  },
-  modalSummaryText: {
-    fontSize: rf(FONT_SIZES.bodyLarge),
-    lineHeight: rf(FONT_SIZES.bodyLarge) * 1.6,
-  },
-  ocrTextArea: {
-    borderWidth: 1,
-    borderRadius: rr(RADIUS.md),
-    padding: rs(SPACING.md),
-    fontSize: rf(FONT_SIZES.body),
-    minHeight: rs(150),
-    lineHeight: rf(FONT_SIZES.body) * 1.5,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: rs(SPACING.sm),
-  },
-  modalActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: rr(RADIUS.md),
-    paddingVertical: rs(SPACING.md),
-    gap: rs(SPACING.xs),
-  },
-  modalActionText: {
-    color: '#FFF',
-    fontWeight: '600',
-    fontSize: rf(FONT_SIZES.body),
+    padding: rs(14),
   },
 });
